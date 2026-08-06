@@ -1,0 +1,53 @@
+K3113rkind's Twitch TTS
+Copyright (C) 2026 Emanuel Höft (K3113rKind)
+
+Dieses Programm ist freie Software: Du kannst es weitergeben und/oder
+verändern, entsprechend den Bedingungen der GNU General Public License,
+wie von der Free Software Foundation veröffentlicht, entweder Version 3
+der Lizenz oder (nach deiner Wahl) jeder späteren Version.
+
+Dieses Programm wird in der Hoffnung verteilt, dass es nützlich ist,
+aber OHNE JEDE GEWÄHRLEISTUNG – sogar ohne die implizite Gewährleistung
+der MARKTGÄNGIGKEIT oder EIGNUNG FÜR EINEN BESTIMMTEN ZWECK. Details in
+der GNU General Public License.
+
+Der vollständige Lizenztext liegt in der Datei COPYING und ist auch hier
+abrufbar: https://www.gnu.org/licenses/gpl-3.0.txt
+
+
+Was das praktisch bedeutet
+--------------------------
+
+Forks, Weitergabe und Veränderung sind ausdrücklich erwünscht. Bedingungen:
+
+- Der Copyright-Vermerk oben bleibt erhalten (Namensnennung).
+- Veränderungen werden als solche gekennzeichnet.
+- Weitergegebene Versionen stehen ebenfalls unter der GPL-3.0-or-later
+  und geben den Quellcode mit weiter.
+
+
+Warum GPL und nicht MIT
+-----------------------
+
+Eine Abhängigkeit dieses Projekts, `phonemizer` (Lautschrift-Umwandlung),
+steht unter der GPL-3.0-or-later, also starkem Copyleft. Solange nur
+dieses Archiv weitergegeben wird, enthält es ausschließlich eigenen Code.
+Sobald aber ein fertig gebautes Docker-Image weitergegeben wird, ist
+GPL-Code enthalten – deshalb ist die GPL hier die saubere Wahl. Sie
+erfüllt zugleich die Bedingung "Forks erlaubt, Nennung bleibt".
+
+
+Drittkomponenten (eigene Lizenzen)
+----------------------------------
+
+- Kokoro (Sprachmodell, hexgrad/Kokoro-82M) – Apache-2.0
+- Deutsche Stimmen aus dem kikiri-tts-Projekt (semidark) – siehe dortiges
+  Repository: https://github.com/semidark/kikiri-tts
+- kokoro / misaki (semidark-Forks) – siehe jeweiliges Repository
+- phonemizer – GPL-3.0-or-later
+- espeak-ng – GPL-3.0-or-later
+- FastAPI, uvicorn, soundfile, NumPy – jeweils eigene, permissive Lizenzen
+
+Die Stimm- und Modelldateien selbst sind nicht Bestandteil dieses
+Archivs; sie werden bei der Installation von Hugging Face geladen und
+unterliegen den Lizenzen der jeweiligen Anbieter.

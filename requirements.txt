@@ -1,0 +1,24 @@
+# Web
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# TTS (Kokoro)
+# torch wird im Dockerfile vorab als CPU-Wheel installiert (spart CUDA-Ballast)
+#
+# semidark's kokoro-Fork statt PyPI-kokoro: fügt lang_code="d" (Deutsch) zu
+# KPipeline hinzu (upstream nur als offener PR hexgrad/kokoro#317). Ohne den
+# Fork kennt KPipeline kein Deutsch.
+kokoro @ git+https://github.com/semidark/kokoro.git@main
+
+# G2P für Deutsch: semidark's misaki-Fork mit [de]-Extra (DEG2P) statt des
+# generischen PyPI-misaki – ohne diesen Fork erzeugen die deutschen
+# Checkpoints nur Rauschen (verifiziert).
+misaki[de] @ git+https://github.com/semidark/misaki.git@main
+
+# G2P-Backend (espeak-ng-Anbindung)
+phonemizer-fork
+espeakng-loader
+
+# Audio
+soundfile>=0.12
+numpy

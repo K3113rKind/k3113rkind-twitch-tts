@@ -1,0 +1,15 @@
+services:
+  twitch-tts:
+    build: .
+    image: k3113rkind-twitch-tts:latest
+    container_name: k3113rkind-twitch-tts
+    restart: unless-stopped
+    ports:
+      - "8380:8000"
+    volumes:
+      # Stimmen – werden von install.sh befüllt
+      - ./models:/models:ro
+      # Einstellungen – überleben Updates und Neustarts
+      - ./config:/config
+    environment:
+      - TZ=Europe/Berlin

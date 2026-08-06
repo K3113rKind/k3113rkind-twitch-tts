@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K3113rkind's Twitch TTS</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="panel">
+  <header class="panel-head">
+    <h1>K3113rkind<span class="accent">›</span>TTS</h1>
+    <div class="status-line">
+      <span id="dot" class="dot"></span>
+      <span id="status-text">Nicht verbunden</span>
+    </div>
+  </header>
+
+  <div id="error-banner" class="banner hidden"></div>
+
+  <section class="group">
+    <label>Twitch-Kanal
+      <span class="row">
+        <input id="channel" type="text" placeholder="z. B. bonjwa" autocomplete="off" spellcheck="false">
+        <button id="apply-channel" type="button" title="Diesen Kanal jetzt vorlesen">Wechseln</button>
+      </span>
+    </label>
+    <label>Stimme
+      <span class="row">
+        <select id="voice"></select>
+        <button id="apply-voice" type="button" title="Diese Stimme sofort verwenden">Wechseln</button>
+      </span>
+    </label>
+  </section>
+
+  <section class="group live">
+    <button id="audio-unlock" type="button" class="btn-unlock hidden">🔊 Ton auf diesem Gerät einschalten</button>
+    <div class="now" id="now-playing">–</div>
+    <div class="actions">
+      <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
+      <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
+    </div>
+    <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster.</p>
+  </section>
+
+  <details class="group advanced">
+    <summary>Weitere Einstellungen</summary>
+
+    <label>Lautstärke <output id="volume-val">100&nbsp;%</output>
+      <input id="volume" type="range" min="0" max="2" step="0.05" value="1">
+    </label>
+    <label>Sprechgeschwindigkeit <output id="speed-val">1.00×</output>
+      <input id="speed" type="range" min="0.5" max="2" step="0.05" value="1">
+    </label>
+
+    <label class="check">
+      <input id="read_username" type="checkbox" checked>
+      Namen vor der Nachricht vorlesen
+    </label>
+    <label class="check">
+      <input id="read_emotes" type="checkbox">
+      Emotes mitvorlesen
+    </label>
+
+    <div class="cols">
+      <label>Pause je Zuschauer (Sek.)
+        <input id="cooldown_seconds" type="number" min="0" step="1" value="10">
+      </label>
+      <label>Max. wartende Nachrichten
+        <input id="queue_limit" type="number" min="1" step="1" value="10">
+      </label>
+    </div>
+
+    <label>Bots, die ignoriert werden <span class="muted">(einer pro Zeile)</span>
+      <textarea id="bot_blocklist" rows="5" spellcheck="false"></textarea>
+    </label>
+
+    <label>Twitch-Token <span class="muted">(optional, wird nicht benötigt)</span>
+      <input id="oauth_token" type="password" placeholder="oauth:…" autocomplete="off">
+    </label>
+  </details>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

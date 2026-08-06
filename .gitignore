@@ -1,0 +1,12 @@
+# Modelldateien – zu groß für Git, werden von install.sh geladen
+models/backbone/*.pth
+models/backbone/*.pt
+models/backbone/config.json
+models/voices/*.pt
+
+# Persönliche Einstellungen (enthält ggf. das Twitch-Token!)
+config/config.json
+
+# Python
+__pycache__/
+*.pyc

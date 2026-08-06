@@ -1,0 +1,1 @@
+Die Stimmen landen automatisch hier (install.sh).
