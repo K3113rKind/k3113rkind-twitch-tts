@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Overlay</title>
+<style>
+  /* Transparenter Hintergrund – OBS blendet ihn aus. */
+  html, body {
+    margin: 0;
+    background: transparent;
+    font: 600 28px/1.35 "Segoe UI", system-ui, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+  #box {
+    display: none;
+    max-width: 90vw;
+    margin: 24px;
+    padding: 14px 20px;
+    border-radius: 12px;
+    background: rgba(18, 20, 27, 0.82);
+    /* Kontur, damit der Text auf jedem Videohintergrund lesbar bleibt */
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+    overflow-wrap: anywhere;
+  }
+  #box.visible { display: block; }
+  #user { color: #b58cff; margin-right: .4em; }
+  /* ?text=0 blendet die Textanzeige aus – dann nur Ton. */
+  body.no-text #box { display: none !important; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 10px; text-align: center;
+    font-size: 16px; background: rgba(180, 60, 60, .9);
+  }
+  #hint.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="box"><span id="user"></span><span id="text"></span></div>
+  <div id="hint" class="hidden">Kein Ton? In OBS Rechtsklick auf die Quelle → Interagieren → einmal ins Bild klicken.</div>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+if (params.get("text") === "0") document.body.classList.add("no-text");
+const HIDE_AFTER_MS = 4000;
+
+const box = document.getElementById("box");
+const userEl = document.getElementById("user");
+const textEl = document.getElementById("text");
+const hint = document.getElementById("hint");
+
+let audioCtx = null, gainNode = null, currentSource = null, hideTimer = null;
+let keepAlive = null, pingTimer = null;
+
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    gainNode = audioCtx.createGain();
+    gainNode.connect(audioCtx.destination);
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  // Unhörbarer Dauerton: hält den Tab als "spielt Audio" markiert, damit
+  // Browser ihn im Hintergrund nicht drosseln oder einfrieren.
+  if (!keepAlive && audioCtx.state === "running") {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    g.gain.value = 0.0001;
+    osc.frequency.value = 60;
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+    osc.start();
+    keepAlive = osc;
+  }
+  return audioCtx.state === "running";
+}
+
+// OBS erlaubt in der Regel Autoplay in Browser-Quellen. Falls doch
+// blockiert, wird der Hinweis eingeblendet; ein Klick über "Interagieren"
+// schaltet den Ton frei.
+function checkAudioState() {
+  hint.classList.toggle("hidden", !audioCtx || audioCtx.state === "running");
+}
+document.addEventListener("click", () => { ensureAudio(); checkAudioState(); });
+
+function show(username, text) {
+  userEl.textContent = username + ":";
+  textEl.textContent = text;
+  box.classList.add("visible");
+  clearTimeout(hideTimer);
+}
+function hide() {
+  hideTimer = setTimeout(() => box.classList.remove("visible"), HIDE_AFTER_MS);
+}
+
+let ws = null, retry = 1000;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    retry = 1000;
+    ensureAudio();
+    checkAudioState();
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+    }, 25000);
+  };
+  ws.onclose = () => { clearInterval(pingTimer); setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); };
+  ws.onmessage = async (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "stop_audio") {
+      if (currentSource) { try { currentSource.stop(); } catch (_) {} currentSource = null; }
+      box.classList.remove("visible");
+      return;
+    }
+    if (msg.type !== "speak") return;
+
+    ensureAudio();
+    checkAudioState();
+    try {
+      const bin = atob(msg.audio);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const buffer = await audioCtx.decodeAudioData(bytes.buffer);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(gainNode);
+      src.onended = () => {
+        if (currentSource === src) {
+          currentSource = null;
+          // Der Server wartet auf diese Bestätigung, bevor die nächste
+          // Nachricht kommt – sonst stockt die Warteschlange.
+          ws.send(JSON.stringify({ type: "played", id: msg.id }));
+          hide();
+        }
+      };
+      if (currentSource) { try { currentSource.stop(); } catch (_) {} }
+      currentSource = src;
+      show(msg.username, msg.text);
+      src.start();
+    } catch (e) {
+      console.error("Wiedergabe fehlgeschlagen", e);
+      ws.send(JSON.stringify({ type: "played", id: msg.id }));
+    }
+  };
+}
+connect();
+</script>
+</body>
+</html>

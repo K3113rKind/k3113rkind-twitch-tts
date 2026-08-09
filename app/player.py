@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from .config import ConfigStore
-from .processing import clean_message
+from .processing import clean_message, has_mention
 from .tts import TTS
 from .voices import available_voices, is_available
 
@@ -81,6 +81,12 @@ class ChatSpeaker:
         user_key = username.lower()
 
         if user_key in cfg["bot_blocklist"]:
+            return
+
+        # Erwähnungen abgeschaltet: ganze Nachricht überspringen.
+        # Vor dem Cooldown-Stempel, damit eine übersprungene Nachricht die
+        # Wartezeit des Users nicht zurücksetzt.
+        if not cfg["read_mentions"] and has_mention(text):
             return
 
         now = time.monotonic()

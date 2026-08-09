@@ -167,10 +167,15 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "status", **_status()})
         while True:
             msg = await ws.receive_json()
-            if msg.get("type") == "played":
+            kind = msg.get("type")
+            if kind == "played":
                 speaker.notify_played(int(msg.get("id", -1)))
-            elif msg.get("type") == "skip":
+            elif kind == "skip":
                 speaker.skip()
+            elif kind == "ping":
+                # Lebenszeichen der Browser-Seite, damit Reverse-Proxys die
+                # Verbindung nicht wegen Untätigkeit kappen.
+                await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
         pass
     finally:
@@ -180,6 +185,13 @@ async def websocket_endpoint(ws: WebSocket):
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/overlay")
+async def overlay():
+    """Schlanke Seite für OBS-Browserquellen: nur Anzeige und Ton, keine
+    Bedienelemente. Mit ?text=0 wird auch die Textanzeige ausgeblendet."""
+    return FileResponse(STATIC_DIR / "overlay.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

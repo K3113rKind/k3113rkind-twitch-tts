@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+# Erwähnung: @name am Wortanfang. Die Bedingung davor verhindert, dass
+# E-Mail-Adressen (mail@example.com) fälschlich als Erwähnung zählen.
+MENTION_RE = re.compile(r"(?<![\w.@])@\w+")
 WS_RE = re.compile(r"\s+")
 
 
@@ -37,6 +40,15 @@ def strip_emotes(text: str, emotes_tag: str | None) -> str:
         for i in range(start, min(end + 1, len(chars))):
             chars[i] = " "
     return "".join(chars)
+
+
+def has_mention(text: str) -> bool:
+    """Enthält die Nachricht eine Erwähnung (@name)?
+
+    Wird zum Filtern ganzer Nachrichten genutzt: Ist die Option
+    abgeschaltet, werden solche Nachrichten gar nicht erst vorgelesen.
+    """
+    return bool(MENTION_RE.search(text))
 
 
 def clean_message(

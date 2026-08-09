@@ -6,6 +6,7 @@ const el = {
   volume: $("volume"), volumeVal: $("volume-val"),
   speed: $("speed"), speedVal: $("speed-val"),
   readUser: $("read_username"), readEmotes: $("read_emotes"),
+  readMentions: $("read_mentions"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
@@ -18,6 +19,7 @@ const el = {
 let audioCtx = null;
 let gainNode = null;
 let currentSource = null;
+let keepAlive = null;
 
 // Die Chat-Verbindung ist serverseitig global, die Browser-Audiofreigabe
 // aber pro Gerät: Sie braucht zwingend eine Nutzer-Geste auf genau diesem
@@ -29,6 +31,22 @@ function updateUnlockButton() {
   el.audioUnlock.classList.toggle("hidden", !locked);
 }
 
+// Hintergrund-Tabs: Browser drosseln inaktive Tabs teils stark oder frieren
+// sie ein – Tabs, die Ton ausgeben, sind davon aber ausgenommen. Deshalb
+// läuft dauerhaft ein praktisch unhörbarer Ton mit (Pegel 0,0001), damit
+// der Tab durchgehend als "spielt Audio" gilt und aktiv bleibt.
+function startKeepAliveTone() {
+  if (!audioCtx || keepAlive) return;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  g.gain.value = 0.0001;
+  osc.frequency.value = 60;
+  osc.connect(g);
+  g.connect(audioCtx.destination);
+  osc.start();
+  keepAlive = osc;
+}
+
 function ensureAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -37,7 +55,9 @@ function ensureAudio() {
     gainNode.connect(audioCtx.destination);
   }
   if (audioCtx.state === "suspended") {
-    audioCtx.resume().then(updateUnlockButton).catch(() => {});
+    audioCtx.resume().then(() => { startKeepAliveTone(); updateUnlockButton(); }).catch(() => {});
+  } else {
+    startKeepAliveTone();
   }
   updateUnlockButton();
 }
@@ -84,6 +104,7 @@ async function playUtterance(msg) {
 /* ------------------------------------------------------------ WebSocket */
 let ws = null;
 let wsRetry = 1000;
+let pingTimer = null;
 
 function sendWs(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
@@ -92,8 +113,16 @@ function sendWs(obj) {
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => { wsRetry = 1000; refreshStatus(); };
+  ws.onopen = () => {
+    wsRetry = 1000;
+    refreshStatus();
+    // Regelmäßiges Lebenszeichen: Reverse-Proxys (z. B. Traefik/Pangolin)
+    // kappen sonst Verbindungen, über die längere Zeit nichts läuft.
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => sendWs({ type: "ping" }), 25000);
+  };
   ws.onclose = () => {
+    clearInterval(pingTimer);
     setTimeout(connectWs, wsRetry);
     wsRetry = Math.min(wsRetry * 2, 15000);
   };
@@ -167,6 +196,7 @@ function collectConfig() {
     speed: parseFloat(el.speed.value),
     read_username: el.readUser.checked,
     read_emotes: el.readEmotes.checked,
+    read_mentions: el.readMentions.checked,
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -192,6 +222,7 @@ function applyConfig(c) {
   el.speed.value = c.speed;
   el.readUser.checked = c.read_username;
   el.readEmotes.checked = c.read_emotes;
+  el.readMentions.checked = c.read_mentions;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
@@ -206,7 +237,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.oauth, el.readUser, el.readEmotes,
-                     el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });

@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
     "speed": 1.0,           # Kokoro-Speed-Parameter
     "read_username": True,  # "<user>: <nachricht>" vorlesen
     "read_emotes": False,   # Emote-Codes mitlesen statt entfernen
+    "read_mentions": True,  # Nachrichten mit @Erwähnung vorlesen
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -92,7 +93,7 @@ class ConfigStore:
                     value = max(1, value)
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
-            elif key in ("read_username", "read_emotes"):
+            elif key in ("read_username", "read_emotes", "read_mentions"):
                 value = bool(value)
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})

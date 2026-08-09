@@ -41,7 +41,7 @@
       <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
       <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
     </div>
-    <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster.</p>
+    <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, nur nicht geschlossen werden.</p>
   </section>
 
   <details class="group advanced">
@@ -61,6 +61,10 @@
     <label class="check">
       <input id="read_emotes" type="checkbox">
       Emotes mitvorlesen
+    </label>
+    <label class="check">
+      <input id="read_mentions" type="checkbox" checked>
+      Nachrichten mit @Erwähnung vorlesen
     </label>
 
     <div class="cols">

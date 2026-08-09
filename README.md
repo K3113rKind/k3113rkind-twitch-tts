@@ -22,7 +22,9 @@ Danach im Browser öffnen: **http://localhost:8380**
 1. Twitch-Kanal eintragen (nur den Namen, z. B. `bonjwa`)
 2. Stimme auswählen
 3. Auf **Vorlesen starten** klicken
-4. Den Browser-Tab geöffnet lassen – der Ton kommt aus diesem Fenster
+4. Den Browser-Tab geöffnet lassen – der Ton kommt aus diesem Fenster.
+   Der Tab darf im Hintergrund liegen (auch minimiert), nur nicht
+   geschlossen werden.
 
 Alles wird automatisch gespeichert.
 
@@ -46,6 +48,8 @@ Aufklappbar unter „Weitere Einstellungen":
 - **Lautstärke** und **Sprechgeschwindigkeit**
 - **Namen vorlesen** – „Peter: hallo" statt nur „hallo"
 - **Emotes mitvorlesen** – normalerweise aus, sonst wird jedes Emote vorgelesen
+- **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
+  denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder
   vorgelesen wird (verhindert Dauerfeuer)
 - **Max. wartende Nachrichten** – bei mehr fliegen die ältesten raus,
@@ -53,11 +57,39 @@ Aufklappbar unter „Weitere Einstellungen":
 - **Bots, die ignoriert werden**
 - **Twitch-Token** – wird nicht gebraucht, das Feld kann leer bleiben
 
+## In OBS einbinden
+
+In OBS eine **Browserquelle** hinzufügen und als URL eintragen:
+
+```
+http://localhost:8380/overlay
+```
+
+Breite/Höhe nach Geschmack (z. B. 1920 × 200). Wichtig: in den Eigenschaften
+der Quelle **"Audio über OBS steuern"** aktivieren, damit der Ton im Stream
+landet und nicht nur lokal läuft.
+
+Die Seite zeigt die gerade vorgelesene Nachricht als Einblendung. Wer nur
+den Ton will, hängt `?text=0` an die URL:
+
+```
+http://localhost:8380/overlay?text=0
+```
+
+Bedient wird weiterhin über die normale Seite (`http://localhost:8380`) –
+das Overlay hat bewusst keine Bedienelemente.
+
+Falls kein Ton kommt: In OBS Rechtsklick auf die Quelle → **Interagieren**
+→ einmal ins Bild klicken. Manche OBS-Versionen verlangen diesen einen
+Klick, bevor sie Ton abspielen.
+
 ## Kein Ton?
 
 - Auf **Ton auf diesem Gerät einschalten** klicken, falls der Knopf da ist
-- Browser-Tab muss geöffnet bleiben
-- Am Handy: Stummschalter am Gerät prüfen
+- Browser-Tab muss geöffnet bleiben (im Hintergrund ist in Ordnung)
+- Am Handy: Stummschalter am Gerät prüfen. Handy-Browser stoppen Tabs im
+  Hintergrund allerdings oft komplett – für Dauerbetrieb einen richtigen
+  Rechner nehmen.
 
 ## Wieder starten / beenden
 
