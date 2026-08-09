@@ -5,6 +5,9 @@ einzustellen – keine Modelle aussuchen, nichts extra herunterladen.
 
 ## Installation
 
+> **Hinweis:** Läuft aktuell nur unter Linux. Eine Windows-Variante ist
+> geplant, aber noch nicht fertig.
+
 Ordner entpacken, Terminal darin öffnen, eintippen:
 
 ```bash
