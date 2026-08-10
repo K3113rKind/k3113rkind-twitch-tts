@@ -94,7 +94,7 @@ class ChatSpeaker:
         if now - last < cfg["cooldown_seconds"]:
             return
 
-        spoken = clean_message(text, emotes_tag, cfg["read_emotes"])
+        spoken = clean_message(text, emotes_tag, cfg["read_emotes"], cfg["read_smileys"])
         if not spoken:
             return
 

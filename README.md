@@ -51,6 +51,8 @@ Aufklappbar unter „Weitere Einstellungen":
 - **Lautstärke** und **Sprechgeschwindigkeit**
 - **Namen vorlesen** – „Peter: hallo" statt nur „hallo"
 - **Emotes mitvorlesen** – normalerweise aus, sonst wird jedes Emote vorgelesen
+- **Smileys und Emojis mitvorlesen** – aus entfernt Text-Smileys wie `:)`
+  oder `xD` und Emojis aus der Nachricht
 - **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
   denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder

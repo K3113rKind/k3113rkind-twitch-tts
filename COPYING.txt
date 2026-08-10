@@ -1,0 +1,8 @@
+Platzhalter für den vollständigen GPL-3.0-Lizenztext.
+
+Bitte einmalig herunterladen und diese Datei ersetzen:
+
+    curl -fL -o COPYING https://www.gnu.org/licenses/gpl-3.0.txt && rm -f COPYING.txt
+
+Grund: Der Lizenztext ist ~35.000 Zeichen lang; er wird bewusst im
+Original von gnu.org bezogen, damit er garantiert wortgetreu ist.
