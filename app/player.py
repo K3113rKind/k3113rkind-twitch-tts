@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from .config import ConfigStore
 from . import thirdparty_emotes
-from .processing import clean_message, has_mention
+from .processing import clean_message, has_mention, is_speakable
 from .tts import TTS
 from .voices import available_voices, is_available
 
@@ -124,9 +124,10 @@ class ChatSpeaker:
                 self._ensure_emote_fetch(room_id)
             else:
                 spoken = thirdparty_emotes.strip_names(spoken, names)
-            if not spoken:
-                return
-        if not spoken:
+        # Nichts Sprechbares übrig (nur Satz-/Sonderzeichen oder ein nicht
+        # erkanntes Emoji)? Dann gar nicht erst vorlesen – sonst bliebe nur
+        # der Name übrig.
+        if not is_speakable(spoken):
             return
 
         self._last_spoken[user_key] = now

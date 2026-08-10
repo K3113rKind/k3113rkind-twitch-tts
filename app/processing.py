@@ -17,6 +17,10 @@ EMOJI_RE = re.compile(
     "\U0000FE00-\U0000FE0F"  # Variantenselektoren
     "\U0001F1E6-\U0001F1FF"  # Flaggen
     "\U0000200D"              # Zero-Width-Joiner
+    "\U000020E3"              # Keycap-Zeichen (1️⃣ 2️⃣ …)
+    "\U00003030\U0000303D"    # Japanische Sonderzeichen
+    "\U000000A9\U000000AE"    # © ®
+    "\U00002122"              # ™
     "]+"
 )
 
@@ -69,6 +73,17 @@ def strip_emotes(text: str, emotes_tag: str | None) -> str:
         for i in range(start, min(end + 1, len(chars))):
             chars[i] = " "
     return "".join(chars)
+
+
+def is_speakable(text: str) -> bool:
+    """Enthält der Text überhaupt etwas Sprechbares?
+
+    Sicherheitsnetz gegen Nachrichten, die nach dem Bereinigen nur noch aus
+    Satz- oder Sonderzeichen bestehen (etwa ein nicht erkanntes Emoji).
+    Ohne diese Prüfung würde die Ausgabe nur aus dem Namen bestehen.
+    `isalnum` erfasst auch nicht-lateinische Schriften.
+    """
+    return any(ch.isalnum() for ch in text)
 
 
 def has_mention(text: str) -> bool:
