@@ -50,6 +50,8 @@ Aufklappbar unter „Weitere Einstellungen":
 
 - **Lautstärke** und **Sprechgeschwindigkeit**
 - **Namen vorlesen** – „Peter: hallo" statt nur „hallo"
+- **Wie der Name angekündigt wird** – „Peter: hallo" oder „Peter sagt hallo"
+  (bei englischen Stimmen „Peter says hallo")
 - **Twitch-Emotes mitvorlesen** – betrifft Emotes wie `Kappa`, `PogChamp`
   oder `KEKW`; normalerweise aus, sonst wird jedes einzelne vorgelesen.
   Erfasst auch Emotes von BetterTTV, 7TV und FrankerFaceZ: deren Namenslisten

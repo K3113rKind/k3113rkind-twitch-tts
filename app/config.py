@@ -28,7 +28,10 @@ DEFAULTS: dict[str, Any] = {
     "voice": DEFAULT_VOICE,
     "volume": 1.0,          # 0.0-2.0, als Gain im Browser angewandt
     "speed": 1.0,           # Kokoro-Speed-Parameter
-    "read_username": True,  # "<user>: <nachricht>" vorlesen
+    "read_username": True,  # Namen vor der Nachricht vorlesen
+    # Wie der Name angekündigt wird: "doppelpunkt" -> "Peter: hallo",
+    # "sagt" -> "Peter sagt hallo" (bei englischen Stimmen "says").
+    "username_style": "doppelpunkt",
     "read_emotes": False,   # Emote-Codes mitlesen statt entfernen
     "read_mentions": True,  # Nachrichten mit @Erwähnung vorlesen
     "read_smileys": True,   # Text-Smileys und Emojis mitlesen
@@ -100,6 +103,10 @@ class ConfigStore:
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":
                 value = str(value).strip().lstrip("#").lower()
+            elif key == "username_style":
+                value = str(value).strip()
+                if value not in ("doppelpunkt", "sagt"):
+                    continue
             elif key == "voice":
                 value = str(value).strip()
                 if value not in VOICES:

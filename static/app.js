@@ -6,6 +6,7 @@ const el = {
   volume: $("volume"), volumeVal: $("volume-val"),
   speed: $("speed"), speedVal: $("speed-val"),
   readUser: $("read_username"), readEmotes: $("read_emotes"),
+  usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
@@ -195,6 +196,7 @@ function collectConfig() {
     volume: parseFloat(el.volume.value),
     speed: parseFloat(el.speed.value),
     read_username: el.readUser.checked,
+    username_style: el.usernameStyle.value,
     read_emotes: el.readEmotes.checked,
     read_mentions: el.readMentions.checked,
     read_smileys: el.readSmileys.checked,
@@ -222,6 +224,7 @@ function applyConfig(c) {
   el.volume.value = c.volume;
   el.speed.value = c.speed;
   el.readUser.checked = c.read_username;
+  el.usernameStyle.value = c.username_style;
   el.readEmotes.checked = c.read_emotes;
   el.readMentions.checked = c.read_mentions;
   el.readSmileys.checked = c.read_smileys;
@@ -238,7 +241,7 @@ function updateSliderLabels() {
 }
 
 /* ---------------------------------------------------------------- Events */
-for (const input of [el.channel, el.voice, el.oauth, el.readUser, el.readEmotes,
+for (const input of [el.channel, el.voice, el.oauth, el.readUser, el.usernameStyle, el.readEmotes,
                      el.readMentions, el.readSmileys, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }

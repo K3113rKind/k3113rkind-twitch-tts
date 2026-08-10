@@ -20,7 +20,7 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .tts import TTS
-from .voices import available_voices, is_available
+from .voices import VOICES, available_voices, is_available
 
 log = logging.getLogger(__name__)
 
@@ -194,7 +194,15 @@ class ChatSpeaker:
                 )
             voice = usable[0]["key"]
 
-        text = f"{msg.username}: {msg.text}" if cfg["read_username"] else msg.text
+        if cfg["read_username"]:
+            if cfg["username_style"] == "sagt":
+                # Verb passend zur Sprache der gewählten Stimme
+                verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
+                text = f"{msg.username} {verb} {msg.text}"
+            else:
+                text = f"{msg.username}: {msg.text}"
+        else:
+            text = msg.text
 
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
 
