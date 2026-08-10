@@ -19,6 +19,9 @@ misaki[de] @ git+https://github.com/semidark/misaki.git@main
 phonemizer-fork
 espeakng-loader
 
+# HTTP-Client für die Emote-Listen von BTTV/7TV/FFZ
+httpx>=0.27
+
 # Audio
 soundfile>=0.12
 numpy

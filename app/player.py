@@ -17,6 +17,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from .config import ConfigStore
+from . import thirdparty_emotes
 from .processing import clean_message, has_mention
 from .tts import TTS
 from .voices import available_voices, is_available
@@ -74,9 +75,27 @@ class ChatSpeaker:
         self._skip = asyncio.Event()
         self._current_id = 0
         self.dropped_total = 0
+        self._emote_fetches: set[str] = set()
+
+    def _ensure_emote_fetch(self, room_id: str) -> None:
+        """Emote-Listen einmal pro Kanal im Hintergrund laden."""
+        if room_id in self._emote_fetches:
+            return
+        self._emote_fetches.add(room_id)
+
+        async def _run() -> None:
+            try:
+                await thirdparty_emotes.fetch_names(room_id)
+            except Exception as exc:
+                log.warning("Emote-Listen konnten nicht geladen werden: %s", exc)
+                self._emote_fetches.discard(room_id)  # nächster Versuch erlaubt
+
+        asyncio.create_task(_run())
 
     # ---------------------------------------------------------------- intake
-    async def on_message(self, username: str, text: str, emotes_tag: str | None) -> None:
+    async def on_message(
+        self, username: str, text: str, emotes_tag: str | None, room_id: str | None = None
+    ) -> None:
         cfg = self.config.as_dict()
         user_key = username.lower()
 
@@ -95,6 +114,18 @@ class ChatSpeaker:
             return
 
         spoken = clean_message(text, emotes_tag, cfg["read_emotes"], cfg["read_smileys"])
+
+        # Emotes von BTTV/7TV/FFZ stehen nicht in den Twitch-Tags und müssen
+        # anhand der Namenslisten entfernt werden. Der Abruf läuft einmal pro
+        # Kanal im Hintergrund; bis er fertig ist, greift der Filter noch nicht.
+        if not cfg["read_emotes"] and room_id and spoken:
+            names = thirdparty_emotes.cached_names(room_id)
+            if names is None:
+                self._ensure_emote_fetch(room_id)
+            else:
+                spoken = thirdparty_emotes.strip_names(spoken, names)
+            if not spoken:
+                return
         if not spoken:
             return
 

@@ -24,8 +24,8 @@ log = logging.getLogger(__name__)
 HOST = "irc.chat.twitch.tv"
 PORT = 6697
 
-# callback(username, message_text, emotes_tag)
-MessageHandler = Callable[[str, str, str | None], Awaitable[None]]
+# callback(username, message_text, emotes_tag, room_id)
+MessageHandler = Callable[[str, str, str | None, str | None], Awaitable[None]]
 
 
 def _parse_tags(raw: str) -> dict[str, str]:
@@ -42,6 +42,9 @@ class TwitchChatClient:
         self.channel = channel.lstrip("#").lower()
         self.on_message = on_message
         self.connected = False
+        # Twitch-Kanal-ID aus den IRC-Tags; wird für die Emote-Listen von
+        # BTTV/7TV/FFZ gebraucht (spart eine Twitch-API-Anmeldung).
+        self.room_id: str | None = None
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -129,9 +132,16 @@ class TwitchChatClient:
             prefix, _, line = line.partition(" ")
         command, _, rest = line.partition(" ")
 
-        if command == "PRIVMSG":
+        if command == "ROOMSTATE":
+            if tags.get("room-id"):
+                self.room_id = tags["room-id"]
+        elif command == "PRIVMSG":
             _, _, text = rest.partition(" :")
             username = tags.get("display-name") or prefix[1:].split("!", 1)[0]
-            await self.on_message(username, text, tags.get("emotes") or None)
+            if tags.get("room-id"):
+                self.room_id = tags["room-id"]
+            await self.on_message(
+                username, text, tags.get("emotes") or None, self.room_id
+            )
         elif command == "RECONNECT":
             raise ConnectionError("Server verlangt RECONNECT")

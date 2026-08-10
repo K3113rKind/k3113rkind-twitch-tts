@@ -50,9 +50,13 @@ Aufklappbar unter „Weitere Einstellungen":
 
 - **Lautstärke** und **Sprechgeschwindigkeit**
 - **Namen vorlesen** – „Peter: hallo" statt nur „hallo"
-- **Emotes mitvorlesen** – normalerweise aus, sonst wird jedes Emote vorgelesen
-- **Smileys und Emojis mitvorlesen** – aus entfernt Text-Smileys wie `:)`
-  oder `xD` und Emojis aus der Nachricht
+- **Twitch-Emotes mitvorlesen** – betrifft Emotes wie `Kappa`, `PogChamp`
+  oder `KEKW`; normalerweise aus, sonst wird jedes einzelne vorgelesen.
+  Erfasst auch Emotes von BetterTTV, 7TV und FrankerFaceZ: deren Namenslisten
+  werden beim ersten Betreten eines Kanals automatisch geladen. Die ersten
+  ein, zwei Nachrichten danach können noch durchrutschen.
+- **Smileys und Emojis mitvorlesen** – betrifft getippte Zeichen wie `:)`,
+  `xD` und Unicode-Emojis wie 😀; aus entfernt sie aus der Nachricht
 - **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
   denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder
