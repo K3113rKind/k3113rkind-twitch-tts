@@ -59,6 +59,10 @@ Aufklappbar unter „Weitere Einstellungen":
   ein, zwei Nachrichten danach können noch durchrutschen.
 - **Smileys und Emojis mitvorlesen** – betrifft getippte Zeichen wie `:)`,
   `xD` und Unicode-Emojis wie 😀; aus entfernt sie aus der Nachricht
+- **Lautsprecher wach halten** – sendet alle acht Sekunden einen kurzen,
+  praktisch unhörbaren Impuls. Verhindert, dass Bluetooth-Boxen oder
+  Soundbars bei längerer Stille abschalten und den Anfang der nächsten
+  Ansage verschlucken
 - **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
   denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder

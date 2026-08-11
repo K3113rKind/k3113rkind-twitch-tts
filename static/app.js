@@ -8,6 +8,7 @@ const el = {
   readUser: $("read_username"), readEmotes: $("read_emotes"),
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
+  keepAwake: $("keep_speakers_awake"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
@@ -21,6 +22,7 @@ let audioCtx = null;
 let gainNode = null;
 let currentSource = null;
 let keepAlive = null;
+let wakeTimer = null;
 
 // Die Chat-Verbindung ist serverseitig global, die Browser-Audiofreigabe
 // aber pro Gerät: Sie braucht zwingend eine Nutzer-Geste auf genau diesem
@@ -36,6 +38,43 @@ function updateUnlockButton() {
 // sie ein – Tabs, die Ton ausgeben, sind davon aber ausgenommen. Deshalb
 // läuft dauerhaft ein praktisch unhörbarer Ton mit (Pegel 0,0001), damit
 // der Tab durchgehend als "spielt Audio" gilt und aktiv bleibt.
+// Viele Lautsprecher (besonders Bluetooth-Boxen und Soundbars) schalten bei
+// längerer Stille in den Standby und schneiden dann den Anfang der nächsten
+// Ansage ab. Der Dauerton oben ist dafür zu leise, deshalb zusätzlich alle
+// paar Sekunden ein kurzer Impuls mit etwas mehr Pegel – tief genug, um
+// praktisch unhörbar zu bleiben, mit weichem Ein-/Ausblenden gegen Knacken.
+const WAKE_INTERVAL_MS = 8000;
+const WAKE_LENGTH_S = 0.3;
+const WAKE_LEVEL = 0.02;
+const WAKE_FREQ = 70;
+
+function wakePulse() {
+  if (!audioCtx || audioCtx.state !== "running") return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.frequency.value = WAKE_FREQ;
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(WAKE_LEVEL, now + 0.05);
+  g.gain.setValueAtTime(WAKE_LEVEL, now + WAKE_LENGTH_S - 0.05);
+  g.gain.linearRampToValueAtTime(0, now + WAKE_LENGTH_S);
+  osc.connect(g);
+  g.connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + WAKE_LENGTH_S);
+}
+
+function updateWakeTimer() {
+  clearInterval(wakeTimer);
+  wakeTimer = null;
+  if (el.keepAwake.checked) {
+    wakeTimer = setInterval(() => {
+      // Während einer Ansage ist ohnehin Signal da – dann nicht dazwischenfunken.
+      if (!currentSource) wakePulse();
+    }, WAKE_INTERVAL_MS);
+  }
+}
+
 function startKeepAliveTone() {
   if (!audioCtx || keepAlive) return;
   const osc = audioCtx.createOscillator();
@@ -46,6 +85,7 @@ function startKeepAliveTone() {
   g.connect(audioCtx.destination);
   osc.start();
   keepAlive = osc;
+  updateWakeTimer();
 }
 
 function ensureAudio() {
@@ -200,6 +240,7 @@ function collectConfig() {
     read_emotes: el.readEmotes.checked,
     read_mentions: el.readMentions.checked,
     read_smileys: el.readSmileys.checked,
+    keep_speakers_awake: el.keepAwake.checked,
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -228,6 +269,8 @@ function applyConfig(c) {
   el.readEmotes.checked = c.read_emotes;
   el.readMentions.checked = c.read_mentions;
   el.readSmileys.checked = c.read_smileys;
+  el.keepAwake.checked = c.keep_speakers_awake;
+  updateWakeTimer();
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
@@ -242,10 +285,11 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.oauth, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });
+el.keepAwake.addEventListener("change", updateWakeTimer);
 for (const slider of [el.volume, el.speed]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
 }

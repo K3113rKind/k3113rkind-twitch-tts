@@ -50,7 +50,7 @@ const textEl = document.getElementById("text");
 const hint = document.getElementById("hint");
 
 let audioCtx = null, gainNode = null, currentSource = null, hideTimer = null;
-let keepAlive = null, pingTimer = null;
+let keepAlive = null, pingTimer = null, wakeTimer = null;
 
 function ensureAudio() {
   if (!audioCtx) {
@@ -70,6 +70,25 @@ function ensureAudio() {
     g.connect(audioCtx.destination);
     osc.start();
     keepAlive = osc;
+    // Kurzer Impuls alle paar Sekunden, damit Lautsprecher bei längerer
+    // Stille nicht in den Standby gehen und den nächsten Satz abschneiden.
+    if (!wakeTimer) {
+      wakeTimer = setInterval(() => {
+        if (currentSource || !audioCtx || audioCtx.state !== "running") return;
+        const now = audioCtx.currentTime;
+        const o = audioCtx.createOscillator();
+        const gg = audioCtx.createGain();
+        o.frequency.value = 70;
+        gg.gain.setValueAtTime(0, now);
+        gg.gain.linearRampToValueAtTime(0.02, now + 0.05);
+        gg.gain.setValueAtTime(0.02, now + 0.25);
+        gg.gain.linearRampToValueAtTime(0, now + 0.3);
+        o.connect(gg);
+        gg.connect(audioCtx.destination);
+        o.start(now);
+        o.stop(now + 0.3);
+      }, 8000);
+    }
   }
   return audioCtx.state === "running";
 }

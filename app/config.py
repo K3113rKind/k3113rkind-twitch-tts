@@ -35,6 +35,9 @@ DEFAULTS: dict[str, Any] = {
     "read_emotes": False,   # Emote-Codes mitlesen statt entfernen
     "read_mentions": True,  # Nachrichten mit @Erwähnung vorlesen
     "read_smileys": True,   # Text-Smileys und Emojis mitlesen
+    # Regelmäßiger kurzer Impuls, damit Lautsprecher/Bluetooth-Boxen bei
+    # längerer Stille nicht in den Standby gehen.
+    "keep_speakers_awake": True,
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -97,7 +100,8 @@ class ConfigStore:
                     value = max(1, value)
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
-            elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys"):
+            elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
+                         "keep_speakers_awake"):
                 value = bool(value)
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
