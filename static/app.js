@@ -43,10 +43,20 @@ function updateUnlockButton() {
 // Ansage ab. Der Dauerton oben ist dafür zu leise, deshalb zusätzlich alle
 // paar Sekunden ein kurzer Impuls mit etwas mehr Pegel – tief genug, um
 // praktisch unhörbar zu bleiben, mit weichem Ein-/Ausblenden gegen Knacken.
-const WAKE_INTERVAL_MS = 8000;
-const WAKE_LENGTH_S = 0.3;
-const WAKE_LEVEL = 0.02;
-const WAKE_FREQ = 70;
+// Werte orientieren sich an etablierten Werkzeugen: KeepSpeekerAwake nutzt
+// 1,5 s alle 45 s bei Pegel 0,01, NVDA hält die Verbindung mit dauerhafter
+// Stille offen. Lieber selten und lang als häufig und kurz – das fällt
+// weniger auf und wird von Bluetooth-Codecs eher als Signal erkannt.
+// Pegel bewusst auf der Hälfte des bewährten Werts (Kopfhörer sind
+// empfindlicher als Boxen).
+// Schläft die Box trotzdem ein: WAKE_LEVEL erhöhen (0.01, 0.02 …) oder
+// WAKE_INTERVAL_MS verkleinern. Hörbar? WAKE_LEVEL senken.
+// Keine hohen Frequenzen (18-19 kHz): für Erwachsene unhörbar, für Kinder
+// aber sehr wohl wahrnehmbar und unangenehm.
+const WAKE_INTERVAL_MS = 45000;
+const WAKE_LENGTH_S = 1.5;
+const WAKE_LEVEL = 0.005;
+const WAKE_FREQ = 40;
 
 function wakePulse() {
   if (!audioCtx || audioCtx.state !== "running") return;
@@ -54,9 +64,10 @@ function wakePulse() {
   const osc = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   osc.frequency.value = WAKE_FREQ;
+  // Weiches Ein- und Ausblenden (je 250 ms) gegen hörbares Knacken.
   g.gain.setValueAtTime(0, now);
-  g.gain.linearRampToValueAtTime(WAKE_LEVEL, now + 0.05);
-  g.gain.setValueAtTime(WAKE_LEVEL, now + WAKE_LENGTH_S - 0.05);
+  g.gain.linearRampToValueAtTime(WAKE_LEVEL, now + 0.25);
+  g.gain.setValueAtTime(WAKE_LEVEL, now + WAKE_LENGTH_S - 0.25);
   g.gain.linearRampToValueAtTime(0, now + WAKE_LENGTH_S);
   osc.connect(g);
   g.connect(audioCtx.destination);

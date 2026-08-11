@@ -60,9 +60,12 @@ Aufklappbar unter „Weitere Einstellungen":
 - **Smileys und Emojis mitvorlesen** – betrifft getippte Zeichen wie `:)`,
   `xD` und Unicode-Emojis wie 😀; aus entfernt sie aus der Nachricht
 - **Lautsprecher wach halten** – sendet alle acht Sekunden einen kurzen,
-  praktisch unhörbaren Impuls. Verhindert, dass Bluetooth-Boxen oder
-  Soundbars bei längerer Stille abschalten und den Anfang der nächsten
-  Ansage verschlucken
+  sehr leisen Tiefton. Verhindert, dass Bluetooth-Boxen oder Soundbars bei
+  längerer Stille abschalten und den Anfang der nächsten Ansage
+  verschlucken. Bei Kopfhörern nicht nötig (die schlafen nicht ein) – wer
+  den Impuls hört, schaltet die Option einfach aus. Feineinstellung über
+  die Konstanten `WAKE_*` am Anfang des betreffenden Abschnitts in
+  `static/app.js`
 - **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
   denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder

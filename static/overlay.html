@@ -78,16 +78,16 @@ function ensureAudio() {
         const now = audioCtx.currentTime;
         const o = audioCtx.createOscillator();
         const gg = audioCtx.createGain();
-        o.frequency.value = 70;
+        o.frequency.value = 40;
         gg.gain.setValueAtTime(0, now);
-        gg.gain.linearRampToValueAtTime(0.02, now + 0.05);
-        gg.gain.setValueAtTime(0.02, now + 0.25);
-        gg.gain.linearRampToValueAtTime(0, now + 0.3);
+        gg.gain.linearRampToValueAtTime(0.005, now + 0.25);
+        gg.gain.setValueAtTime(0.005, now + 1.25);
+        gg.gain.linearRampToValueAtTime(0, now + 1.5);
         o.connect(gg);
         gg.connect(audioCtx.destination);
         o.start(now);
-        o.stop(now + 0.3);
-      }, 8000);
+        o.stop(now + 1.5);
+      }, 45000);
     }
   }
   return audioCtx.state === "running";
