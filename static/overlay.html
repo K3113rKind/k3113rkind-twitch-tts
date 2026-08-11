@@ -64,7 +64,7 @@ function ensureAudio() {
   if (!keepAlive && audioCtx.state === "running") {
     const osc = audioCtx.createOscillator();
     const g = audioCtx.createGain();
-    g.gain.value = 0.0001;
+    g.gain.value = 0.003;  // siehe app.js: 0,0001 war zu leise für die Tab-Erkennung
     osc.frequency.value = 60;
     osc.connect(g);
     g.connect(audioCtx.destination);

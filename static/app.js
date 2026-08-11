@@ -36,7 +36,7 @@ function updateUnlockButton() {
 
 // Hintergrund-Tabs: Browser drosseln inaktive Tabs teils stark oder frieren
 // sie ein – Tabs, die Ton ausgeben, sind davon aber ausgenommen. Deshalb
-// läuft dauerhaft ein praktisch unhörbarer Ton mit (Pegel 0,0001), damit
+// läuft dauerhaft ein sehr leiser Ton mit (Pegel KEEPALIVE_LEVEL), damit
 // der Tab durchgehend als "spielt Audio" gilt und aktiv bleibt.
 // Viele Lautsprecher (besonders Bluetooth-Boxen und Soundbars) schalten bei
 // längerer Stille in den Standby und schneiden dann den Anfang der nächsten
@@ -53,6 +53,7 @@ function updateUnlockButton() {
 // WAKE_INTERVAL_MS verkleinern. Hörbar? WAKE_LEVEL senken.
 // Keine hohen Frequenzen (18-19 kHz): für Erwachsene unhörbar, für Kinder
 // aber sehr wohl wahrnehmbar und unangenehm.
+const KEEPALIVE_LEVEL = 0.003;
 const WAKE_INTERVAL_MS = 45000;
 const WAKE_LENGTH_S = 1.5;
 const WAKE_LEVEL = 0.005;
@@ -90,7 +91,13 @@ function startKeepAliveTone() {
   if (!audioCtx || keepAlive) return;
   const osc = audioCtx.createOscillator();
   const g = audioCtx.createGain();
-  g.gain.value = 0.0001;
+  // Pegel des Dauertons. 0,0001 war zu leise: Der Browser stufte den Tab
+  // nicht als tonausgebend ein (kein Lautsprechersymbol am Tab) – und
+  // genau daran hängt die Ausnahme von der Hintergrund-Drosselung.
+  // 0,003 ist auf 60 Hz normalerweise unhörbar, sollte aber über der
+  // Erkennungsschwelle liegen. Leuchtet das Symbol immer noch nicht:
+  // schrittweise erhöhen (0,01, 0,03). Hörbar: senken.
+  g.gain.value = KEEPALIVE_LEVEL;
   osc.frequency.value = 60;
   osc.connect(g);
   g.connect(audioCtx.destination);
