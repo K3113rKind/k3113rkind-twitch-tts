@@ -74,7 +74,13 @@
     </label>
     <label class="check">
       <input id="keep_speakers_awake" type="checkbox" checked>
-      Lautsprecher wach halten <span class="muted">(unhörbarer Impuls alle paar Sekunden)</span>
+      Lautsprecher wach halten <span class="muted">(unhörbarer Impuls alle 45 Sekunden)</span>
+    </label>
+    <label>Hintergrundton <output id="keepalive-val">0.003</output>
+      <input id="keepalive_level" type="range" min="0" max="0.05" step="0.001" value="0.003">
+      <span class="muted">Hält den Tab im Hintergrund aktiv. Hoch genug, wenn das
+      Lautsprechersymbol am Tab dauerhaft leuchtet – und niedrig genug, dass du
+      nichts hörst. 0 schaltet ihn ab.</span>
     </label>
     <label class="check">
       <input id="read_mentions" type="checkbox" checked>

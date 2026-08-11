@@ -9,6 +9,7 @@ const el = {
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
   keepAwake: $("keep_speakers_awake"),
+  keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
@@ -22,6 +23,7 @@ let audioCtx = null;
 let gainNode = null;
 let currentSource = null;
 let keepAlive = null;
+let keepAliveGain = null;
 let wakeTimer = null;
 
 // Die Chat-Verbindung ist serverseitig global, die Browser-Audiofreigabe
@@ -36,8 +38,10 @@ function updateUnlockButton() {
 
 // Hintergrund-Tabs: Browser drosseln inaktive Tabs teils stark oder frieren
 // sie ein – Tabs, die Ton ausgeben, sind davon aber ausgenommen. Deshalb
-// läuft dauerhaft ein sehr leiser Ton mit (Pegel KEEPALIVE_LEVEL), damit
-// der Tab durchgehend als "spielt Audio" gilt und aktiv bleibt.
+// läuft dauerhaft ein sehr leiser Ton mit, damit der Tab durchgehend als
+// "spielt Audio" gilt und aktiv bleibt. Der Pegel ist über den Regler
+// "Hintergrundton" einstellbar, weil die Erkennungsschwelle je nach
+// Browser unterschiedlich ist.
 // Viele Lautsprecher (besonders Bluetooth-Boxen und Soundbars) schalten bei
 // längerer Stille in den Standby und schneiden dann den Anfang der nächsten
 // Ansage ab. Der Dauerton oben ist dafür zu leise, deshalb zusätzlich alle
@@ -53,7 +57,6 @@ function updateUnlockButton() {
 // WAKE_INTERVAL_MS verkleinern. Hörbar? WAKE_LEVEL senken.
 // Keine hohen Frequenzen (18-19 kHz): für Erwachsene unhörbar, für Kinder
 // aber sehr wohl wahrnehmbar und unangenehm.
-const KEEPALIVE_LEVEL = 0.003;
 const WAKE_INTERVAL_MS = 45000;
 const WAKE_LENGTH_S = 1.5;
 const WAKE_LEVEL = 0.005;
@@ -97,12 +100,13 @@ function startKeepAliveTone() {
   // 0,003 ist auf 60 Hz normalerweise unhörbar, sollte aber über der
   // Erkennungsschwelle liegen. Leuchtet das Symbol immer noch nicht:
   // schrittweise erhöhen (0,01, 0,03). Hörbar: senken.
-  g.gain.value = KEEPALIVE_LEVEL;
+  g.gain.value = parseFloat(el.keepaliveLevel.value);
   osc.frequency.value = 60;
   osc.connect(g);
   g.connect(audioCtx.destination);
   osc.start();
   keepAlive = osc;
+  keepAliveGain = g;
   updateWakeTimer();
 }
 
@@ -259,6 +263,7 @@ function collectConfig() {
     read_mentions: el.readMentions.checked,
     read_smileys: el.readSmileys.checked,
     keep_speakers_awake: el.keepAwake.checked,
+    keepalive_level: parseFloat(el.keepaliveLevel.value),
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -288,12 +293,23 @@ function applyConfig(c) {
   el.readMentions.checked = c.read_mentions;
   el.readSmileys.checked = c.read_smileys;
   el.keepAwake.checked = c.keep_speakers_awake;
+  el.keepaliveLevel.value = c.keepalive_level;
   updateWakeTimer();
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
   updateSliderLabels();
+  updateKeepaliveLabel();
 }
+
+function updateKeepaliveLabel() {
+  const v = parseFloat(el.keepaliveLevel.value);
+  el.keepaliveVal.textContent = v === 0 ? "aus" : v.toFixed(3);
+  // Sofort wirksam, ohne Neuladen der Seite.
+  if (keepAliveGain) keepAliveGain.gain.value = v;
+}
+
+el.keepaliveLevel.addEventListener("input", () => { updateKeepaliveLabel(); saveConfig(); });
 
 function updateSliderLabels() {
   el.volumeVal.textContent = Math.round(parseFloat(el.volume.value) * 100) + " %";

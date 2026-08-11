@@ -59,6 +59,10 @@ Aufklappbar unter „Weitere Einstellungen":
   ein, zwei Nachrichten danach können noch durchrutschen.
 - **Smileys und Emojis mitvorlesen** – betrifft getippte Zeichen wie `:)`,
   `xD` und Unicode-Emojis wie 😀; aus entfernt sie aus der Nachricht
+- **Hintergrundton** – ein durchgehender, sehr leiser Ton. Er sorgt dafür,
+  dass der Browser den Tab als tonausgebend einstuft und ihn im Hintergrund
+  nicht drosselt. Richtig eingestellt ist er, wenn das Lautsprechersymbol am
+  Tab dauerhaft leuchtet und man nichts hört. 0 schaltet ihn ab
 - **Lautsprecher wach halten** – sendet alle acht Sekunden einen kurzen,
   sehr leisen Tiefton. Verhindert, dass Bluetooth-Boxen oder Soundbars bei
   längerer Stille abschalten und den Anfang der nächsten Ansage

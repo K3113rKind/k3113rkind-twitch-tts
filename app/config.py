@@ -38,6 +38,10 @@ DEFAULTS: dict[str, Any] = {
     # Regelmäßiger kurzer Impuls, damit Lautsprecher/Bluetooth-Boxen bei
     # längerer Stille nicht in den Standby gehen.
     "keep_speakers_awake": True,
+    # Pegel des durchgehenden Hintergrundtons. Zweck: Der Browser stuft den
+    # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
+    # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
+    "keepalive_level": 0.003,
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -98,6 +102,8 @@ class ConfigStore:
                 value = max(0, int(value))
                 if key == "queue_limit":
                     value = max(1, value)
+            elif key == "keepalive_level":
+                value = min(max(float(value), 0.0), 0.05)
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
