@@ -8,12 +8,12 @@ uvicorn[standard]>=0.30
 # semidark's kokoro-Fork statt PyPI-kokoro: fügt lang_code="d" (Deutsch) zu
 # KPipeline hinzu (upstream nur als offener PR hexgrad/kokoro#317). Ohne den
 # Fork kennt KPipeline kein Deutsch.
-kokoro @ git+https://github.com/semidark/kokoro.git@main
+kokoro @ git+https://github.com/semidark/kokoro.git@b96fef95e6a746495f92443fac7c688f90fc57fc
 
 # G2P für Deutsch: semidark's misaki-Fork mit [de]-Extra (DEG2P) statt des
 # generischen PyPI-misaki – ohne diesen Fork erzeugen die deutschen
 # Checkpoints nur Rauschen (verifiziert).
-misaki[de] @ git+https://github.com/semidark/misaki.git@main
+misaki[de] @ git+https://github.com/semidark/misaki.git@9cda9268309160120fffee216280a9ca83ac4644
 
 # G2P-Backend (espeak-ng-Anbindung)
 phonemizer-fork
