@@ -21,10 +21,6 @@ log = logging.getLogger(__name__)
 
 DEFAULTS: dict[str, Any] = {
     "channel": "",
-    # Optionales Twitch-OAuth-Token. Wird nur gespeichert (für spätere
-    # Funktionen wie Antworten senden); die Chat-Verbindung selbst ist
-    # anonym/read-only.
-    "oauth_token": "",
     "voice": DEFAULT_VOICE,
     "volume": 1.0,          # 0.0-2.0, als Gain im Browser angewandt
     "speed": 1.0,           # Kokoro-Speed-Parameter

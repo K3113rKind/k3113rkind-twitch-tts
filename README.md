@@ -77,7 +77,6 @@ Aufklappbar unter „Weitere Einstellungen":
 - **Max. wartende Nachrichten** – bei mehr fliegen die ältesten raus,
   damit der Vorleser nicht hinterherhinkt
 - **Bots, die ignoriert werden**
-- **Twitch-Token** – wird nicht gebraucht, das Feld kann leer bleiben
 
 ## In OBS einbinden
 
@@ -138,5 +137,13 @@ Details und die Gründe für die Lizenzwahl stehen in der Datei `LICENSE`.
 [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) als Sprachmodell,
 die deutschen Stimmen kommen aus dem
 [kikiri-tts-Projekt](https://github.com/semidark/kikiri-tts). Alles läuft
-lokal auf dem eigenen Rechner – es geht nichts an fremde Server. Nur die
-Verbindung zum Twitch-Chat geht ins Internet (anonym, ohne Anmeldung).
+lokal auf dem eigenen Rechner, die Sprachausgabe verlässt ihn nicht. Ins
+Internet gehen nur die Verbindung zum Twitch-Chat (anonym, ohne Anmeldung)
+und der einmalige Abruf der öffentlichen Emote-Namenslisten von BetterTTV,
+7TV und FrankerFaceZ je Kanal (abschaltbar, indem „Twitch-Emotes
+mitvorlesen" aktiviert wird).
+
+Die Oberfläche ist ohne Anmeldung im ganzen Heimnetz erreichbar
+(Port 8380) – gewollt, damit sie auch vom Handy oder Tablet bedienbar ist.
+Nur für diesen Rechner: in `docker-compose.yml` die Zeile
+`"8380:8000"` in `"127.0.0.1:8380:8000"` ändern.

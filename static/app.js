@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  channel: $("channel"), voice: $("voice"), oauth: $("oauth_token"),
+  channel: $("channel"), voice: $("voice"),
   volume: $("volume"), volumeVal: $("volume-val"),
   speed: $("speed"), speedVal: $("speed-val"),
   readUser: $("read_username"), readEmotes: $("read_emotes"),
@@ -254,7 +254,6 @@ function collectConfig() {
   return {
     channel: el.channel.value,
     voice: el.voice.value,
-    oauth_token: el.oauth.value,
     volume: parseFloat(el.volume.value),
     speed: parseFloat(el.speed.value),
     read_username: el.readUser.checked,
@@ -284,7 +283,6 @@ function saveConfig() {
 function applyConfig(c) {
   el.channel.value = c.channel;
   el.voice.dataset.selected = c.voice;
-  el.oauth.value = c.oauth_token;
   el.volume.value = c.volume;
   el.speed.value = c.speed;
   el.readUser.checked = c.read_username;
@@ -318,7 +316,7 @@ function updateSliderLabels() {
 }
 
 /* ---------------------------------------------------------------- Events */
-for (const input of [el.channel, el.voice, el.oauth, el.readUser, el.usernameStyle, el.readEmotes,
+for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
                      el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }

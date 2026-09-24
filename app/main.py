@@ -66,7 +66,10 @@ async def get_config():
 
 @app.put("/api/config")
 async def put_config(changes: dict):
-    return config.update(changes)
+    try:
+        return config.update(changes)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"Ungültiger Wert: {exc}")
 
 
 @app.get("/api/status")
