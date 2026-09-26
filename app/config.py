@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 DEFAULTS: dict[str, Any] = {
     "channel": "",
     "voice": DEFAULT_VOICE,
-    "volume": 1.0,          # 0.0-2.0, als Gain im Browser angewandt
+    "volume": 1.0,          # 0.0-2.0, als Gain im Audio-Stream angewandt
     "speed": 1.0,           # Kokoro-Speed-Parameter
     "read_username": True,  # Namen vor der Nachricht vorlesen
     # Wie der Name angekündigt wird: "doppelpunkt" -> "Peter: hallo",

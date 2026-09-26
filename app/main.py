@@ -1,4 +1,4 @@
-"""FastAPI-Anwendung: REST-API, WebSocket-Audio, statische GUI."""
+"""FastAPI-Anwendung: REST-API, Audio-Stream, WebSocket-Status, statische GUI."""
 
 from __future__ import annotations
 
@@ -6,12 +6,13 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ConfigStore
 from .player import Broadcaster, ChatSpeaker
+from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
 from .voices import available_voices, is_available
@@ -26,7 +27,8 @@ app = FastAPI(title="K3113rkind's Twitch TTS")
 config = ConfigStore()
 tts = TTS()
 broadcaster = Broadcaster()
-speaker = ChatSpeaker(config, tts, broadcaster)
+audio_stream = AudioStream(config)
+speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
 
 state: dict = {"twitch": None, "error": None, "loading": False}
 
@@ -56,6 +58,7 @@ def _status() -> dict:
         "voices": available_voices(),
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
+        "stream_listeners": audio_stream.listener_count,
     }
 
 
@@ -171,9 +174,7 @@ async def websocket_endpoint(ws: WebSocket):
         while True:
             msg = await ws.receive_json()
             kind = msg.get("type")
-            if kind == "played":
-                speaker.notify_played(int(msg.get("id", -1)))
-            elif kind == "skip":
+            if kind == "skip":
                 speaker.skip()
             elif kind == "ping":
                 # Lebenszeichen der Browser-Seite, damit Reverse-Proxys die
@@ -183,6 +184,32 @@ async def websocket_endpoint(ws: WebSocket):
         pass
     finally:
         broadcaster.remove(ws)
+
+
+STREAM_HEADERS = {
+    # Live-Stream: nichts zwischenspeichern, nichts umkodieren/puffern lassen
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "X-Accel-Buffering": "no",
+    "icy-name": "K3113rkind's Twitch TTS",
+}
+
+
+@app.api_route("/stream", methods=["GET", "HEAD"])
+async def stream(request: Request):
+    """Endloser MP3-Stream mit allen Ansagen (Webradio-Prinzip).
+
+    Wird von der GUI und dem Overlay per <audio> abgespielt. Anders als
+    WebAudio hält ein laufendes Media-Element auf dem iPhone auch im
+    Hintergrund und bei gesperrtem Display die Wiedergabe am Leben.
+    Range-Anfragen werden bewusst ignoriert (200 statt 206), wie bei
+    Icecast – einen Live-Stream kann man nicht spulen."""
+    if request.method == "HEAD":
+        return Response(media_type="audio/mpeg", headers=STREAM_HEADERS)
+    return StreamingResponse(
+        audio_stream.listen(), media_type="audio/mpeg", headers=STREAM_HEADERS
+    )
 
 
 @app.get("/")

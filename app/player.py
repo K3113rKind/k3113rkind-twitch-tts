@@ -2,15 +2,16 @@
 
 Flow: Twitch message -> filters (bot list, per-user cooldown, cleaning)
 -> bounded queue (drop oldest on overflow) -> worker synthesizes via the
-TTS engine -> WAV is streamed over WebSocket to the browser -> worker waits
-for the browser's "played" ack (or skip / watchdog timeout) before taking
-the next message. Guarantees strictly sequential playback, no overlap.
+TTS engine -> samples go into the continuous audio stream (stream.py, played
+by the browser via <audio src="/stream">) -> worker waits until the stream has
+emitted the whole utterance (or skip) before taking the next message.
+Guarantees strictly sequential playback, no overlap. The WebSocket only
+carries status/text for the UI, no audio.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import time
 from collections import deque
@@ -19,14 +20,11 @@ from dataclasses import dataclass
 from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
+from .stream import AudioStream
 from .tts import TTS
 from .voices import VOICES, available_voices, is_available
 
 log = logging.getLogger(__name__)
-
-# Extra grace on top of the audio duration before we assume the browser
-# died and move on (keeps the queue alive if no UI tab is open to ack).
-ACK_GRACE_SECONDS = 10
 
 
 @dataclass
@@ -63,15 +61,17 @@ class Broadcaster:
 
 
 class ChatSpeaker:
-    def __init__(self, config: ConfigStore, tts: TTS, broadcaster: Broadcaster) -> None:
+    def __init__(
+        self, config: ConfigStore, tts: TTS, broadcaster: Broadcaster, audio: AudioStream
+    ) -> None:
         self.config = config
         self.tts = tts
         self.broadcaster = broadcaster
+        self.audio = audio
         self._queue: deque[QueuedMessage] = deque()
         self._queue_event = asyncio.Event()
         self._last_spoken: dict[str, float] = {}
         self._worker: asyncio.Task | None = None
-        self._ack = asyncio.Event()
         self._skip = asyncio.Event()
         self._current_id = 0
         self.dropped_total = 0
@@ -156,6 +156,7 @@ class ChatSpeaker:
         self._queue.clear()
         self._last_spoken.clear()
         self._skip.set()  # release a potentially waiting playback
+        self.audio.stop_current()
         await self.broadcaster.send({"type": "stop_audio"})
         await self._push_queue_state()
 
@@ -207,31 +208,29 @@ class ChatSpeaker:
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
 
         self._current_id += 1
-        self._ack.clear()
+        utterance_id = self._current_id
         self._skip.clear()
+        # Nur Anzeige für die UI/das Overlay – der Ton läuft über /stream.
         await self.broadcaster.send(
             {
                 "type": "speak",
-                "id": self._current_id,
+                "id": utterance_id,
                 "username": msg.username,
                 "text": msg.text,
-                "audio": base64.b64encode(result.wav_bytes).decode("ascii"),
             }
         )
 
-        # Sequential playback: wait until the browser reports completion,
-        # skip is pressed, or the watchdog fires (e.g. no UI tab open).
-        timeout = result.duration_seconds + ACK_GRACE_SECONDS
-        ack_task = asyncio.create_task(self._ack.wait())
+        # Sequential playback: wait until the stream has emitted the whole
+        # utterance or skip is pressed.
+        done_task = asyncio.ensure_future(self.audio.play(result.samples))
         skip_task = asyncio.create_task(self._skip.wait())
         done, pending = await asyncio.wait(
-            {ack_task, skip_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            {done_task, skip_task}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
         if skip_task in done:
+            self.audio.stop_current()
             await self.broadcaster.send({"type": "stop_audio"})
-
-    def notify_played(self, utterance_id: int) -> None:
-        if utterance_id == self._current_id:
-            self._ack.set()
+        else:
+            await self.broadcaster.send({"type": "done", "id": utterance_id})

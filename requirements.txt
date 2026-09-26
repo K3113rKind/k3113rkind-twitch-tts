@@ -25,3 +25,6 @@ httpx>=0.27
 # Audio
 soundfile>=0.12
 numpy
+# MP3-Kodierung für den durchgehenden Audio-Stream (/stream); fertige
+# Wheels mit eingebautem LAME, kein ffmpeg im Image nötig
+lameenc>=1.8

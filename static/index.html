@@ -41,7 +41,7 @@
       <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
       <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
     </div>
-    <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, nur nicht geschlossen werden.</p>
+    <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, auf dem Handy darf auch das Display gesperrt sein. Nur nicht schließen. Der Ton läuft etwa 1–2 Sekunden hinter der Anzeige.</p>
   </section>
 
   <details class="group advanced">
@@ -78,9 +78,10 @@
     </label>
     <label>Hintergrundton <output id="keepalive-val">0.003</output>
       <input id="keepalive_level" type="range" min="0" max="0.05" step="0.001" value="0.003">
-      <span class="muted">Hält den Tab im Hintergrund aktiv. Hoch genug, wenn das
-      Lautsprechersymbol am Tab dauerhaft leuchtet – und niedrig genug, dass du
-      nichts hörst. 0 schaltet ihn ab.</span>
+      <span class="muted">Leiser Dauerton im Stream, hält Tab und Lautsprecher
+      aktiv. Hoch genug, wenn das Lautsprechersymbol am Tab dauerhaft leuchtet –
+      und niedrig genug, dass du nichts hörst. 0 schaltet ihn ab. Gilt für alle
+      verbundenen Geräte.</span>
     </label>
     <label class="check">
       <input id="read_mentions" type="checkbox" checked>

@@ -15,7 +15,6 @@ Style-Vector-Indizierung), wie im Referenzskript von semidark/kikiri-tts.
 
 from __future__ import annotations
 
-import io
 import logging
 import threading
 
@@ -28,10 +27,13 @@ REPO_ID = "hexgrad/Kokoro-82M"  # Architektur-Referenz; Gewichte kommen lokal
 
 
 class SynthesisResult:
-    __slots__ = ("wav_bytes", "duration_seconds", "sample_rate")
+    """Rohe Samples (float32, mono, SAMPLE_RATE) – kodiert wird erst im
+    Audio-Stream (stream.py)."""
 
-    def __init__(self, wav_bytes: bytes, duration_seconds: float, sample_rate: int):
-        self.wav_bytes = wav_bytes
+    __slots__ = ("samples", "duration_seconds", "sample_rate")
+
+    def __init__(self, samples, duration_seconds: float, sample_rate: int):
+        self.samples = samples
         self.duration_seconds = duration_seconds
         self.sample_rate = sample_rate
 
@@ -95,7 +97,6 @@ class TTS:
             self.load(voice_key)
 
         import numpy as np
-        import soundfile as sf
 
         pipeline = self._pipelines[cache_key]
         pack = self._packs[voice_key]
@@ -108,10 +109,8 @@ class TTS:
             raise ValueError("Kein Audio erzeugt (leerer Text nach Phonemisierung?).")
 
         samples = np.concatenate(chunks).astype(np.float32)
-        buf = io.BytesIO()
-        sf.write(buf, samples, SAMPLE_RATE, format="WAV", subtype="PCM_16")
         return SynthesisResult(
-            wav_bytes=buf.getvalue(),
+            samples=samples,
             duration_seconds=len(samples) / SAMPLE_RATE,
             sample_rate=SAMPLE_RATE,
         )

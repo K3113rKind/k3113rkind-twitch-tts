@@ -19,149 +19,92 @@ const el = {
 };
 
 /* --------------------------------------------------------- Audio-Player */
-let audioCtx = null;
-let gainNode = null;
-let currentSource = null;
-let keepAlive = null;
-let keepAliveGain = null;
-let wakeTimer = null;
+// Der Ton kommt als durchgehender MP3-Stream vom Server (/stream) und läuft
+// über ein normales <audio>-Element – wie ein Internetradio. Nur so spielt
+// das iPhone auch im Hintergrund und bei gesperrtem Display weiter: iOS
+// pausiert reines WebAudio samt JavaScript, ein laufendes Media-Element
+// dagegen nicht. Hintergrundton und Weckimpuls für die Lautsprecher mischt
+// der Server direkt in den Stream, Lautstärke ebenfalls (iOS ignoriert
+// audio.volume).
+const player = new Audio();
+player.preload = "none";
+player.setAttribute("playsinline", "");
+let wantPlay = false;     // Nutzer hat den Ton auf diesem Gerät eingeschaltet
+let restartTimer = null;
 
-// Die Chat-Verbindung ist serverseitig global, die Browser-Audiofreigabe
-// aber pro Gerät: Sie braucht zwingend eine Nutzer-Geste auf genau diesem
-// Gerät (Autoplay-Sperre). Öffnet man die Seite auf einem zweiten Gerät,
-// während die Verbindung schon läuft, gäbe es ohne eigenen Button nie
-// Gelegenheit, den Ton freizuschalten.
+// Die Chat-Verbindung ist serverseitig global, die Audiofreigabe aber pro
+// Gerät: Sie braucht eine Nutzer-Geste auf genau diesem Gerät
+// (Autoplay-Sperre). Öffnet man die Seite auf einem zweiten Gerät, während
+// die Verbindung schon läuft, gibt es dafür diesen eigenen Knopf.
 function updateUnlockButton() {
-  const locked = !audioCtx || audioCtx.state !== "running";
-  el.audioUnlock.classList.toggle("hidden", !locked);
+  el.audioUnlock.classList.toggle("hidden", !player.paused);
 }
 
-// Hintergrund-Tabs: Browser drosseln inaktive Tabs teils stark oder frieren
-// sie ein – Tabs, die Ton ausgeben, sind davon aber ausgenommen. Deshalb
-// läuft dauerhaft ein sehr leiser Ton mit, damit der Tab durchgehend als
-// "spielt Audio" gilt und aktiv bleibt. Der Pegel ist über den Regler
-// "Hintergrundton" einstellbar, weil die Erkennungsschwelle je nach
-// Browser unterschiedlich ist.
-// Viele Lautsprecher (besonders Bluetooth-Boxen und Soundbars) schalten bei
-// längerer Stille in den Standby und schneiden dann den Anfang der nächsten
-// Ansage ab. Der Dauerton oben ist dafür zu leise, deshalb zusätzlich alle
-// paar Sekunden ein kurzer Impuls mit etwas mehr Pegel – tief genug, um
-// praktisch unhörbar zu bleiben, mit weichem Ein-/Ausblenden gegen Knacken.
-// Werte orientieren sich an etablierten Werkzeugen: KeepSpeekerAwake nutzt
-// 1,5 s alle 45 s bei Pegel 0,01, NVDA hält die Verbindung mit dauerhafter
-// Stille offen. Lieber selten und lang als häufig und kurz – das fällt
-// weniger auf und wird von Bluetooth-Codecs eher als Signal erkannt.
-// Pegel bewusst auf der Hälfte des bewährten Werts (Kopfhörer sind
-// empfindlicher als Boxen).
-// Schläft die Box trotzdem ein: WAKE_LEVEL erhöhen (0.01, 0.02 …) oder
-// WAKE_INTERVAL_MS verkleinern. Hörbar? WAKE_LEVEL senken.
-// Keine hohen Frequenzen (18-19 kHz): für Erwachsene unhörbar, für Kinder
-// aber sehr wohl wahrnehmbar und unangenehm.
-const WAKE_INTERVAL_MS = 45000;
-const WAKE_LENGTH_S = 1.5;
-const WAKE_LEVEL = 0.005;
-const WAKE_FREQ = 40;
-
-function wakePulse() {
-  if (!audioCtx || audioCtx.state !== "running") return;
-  const now = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  osc.frequency.value = WAKE_FREQ;
-  // Weiches Ein- und Ausblenden (je 250 ms) gegen hörbares Knacken.
-  g.gain.setValueAtTime(0, now);
-  g.gain.linearRampToValueAtTime(WAKE_LEVEL, now + 0.25);
-  g.gain.setValueAtTime(WAKE_LEVEL, now + WAKE_LENGTH_S - 0.25);
-  g.gain.linearRampToValueAtTime(0, now + WAKE_LENGTH_S);
-  osc.connect(g);
-  g.connect(audioCtx.destination);
-  osc.start(now);
-  osc.stop(now + WAKE_LENGTH_S);
+// Immer frisch verbinden statt fortsetzen: Nach einer Pause stünde sonst
+// alter Ton im Puffer.
+function startStream() {
+  wantPlay = true;
+  clearTimeout(restartTimer);
+  player.src = "/stream?t=" + Date.now();
+  const p = player.play();
+  if (p) p.catch((e) => { console.warn("Wiedergabe blockiert", e); updateUnlockButton(); });
+  setMediaSession();
 }
 
-function updateWakeTimer() {
-  clearInterval(wakeTimer);
-  wakeTimer = null;
-  if (el.keepAwake.checked) {
-    wakeTimer = setInterval(() => {
-      // Während einer Ansage ist ohnehin Signal da – dann nicht dazwischenfunken.
-      if (!currentSource) wakePulse();
-    }, WAKE_INTERVAL_MS);
-  }
+function stopStream() {
+  wantPlay = false;
+  clearTimeout(restartTimer);
+  player.pause();
+  player.removeAttribute("src");
+  player.load();  // Verbindung zum Server wirklich schließen
+  updateUnlockButton();
 }
 
-function startKeepAliveTone() {
-  if (!audioCtx || keepAlive) return;
-  const osc = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  // Pegel des Dauertons. 0,0001 war zu leise: Der Browser stufte den Tab
-  // nicht als tonausgebend ein (kein Lautsprechersymbol am Tab) – und
-  // genau daran hängt die Ausnahme von der Hintergrund-Drosselung.
-  // 0,003 ist auf 60 Hz normalerweise unhörbar, sollte aber über der
-  // Erkennungsschwelle liegen. Leuchtet das Symbol immer noch nicht:
-  // schrittweise erhöhen (0,01, 0,03). Hörbar: senken.
-  g.gain.value = parseFloat(el.keepaliveLevel.value);
-  osc.frequency.value = 60;
-  osc.connect(g);
-  g.connect(audioCtx.destination);
-  osc.start();
-  keepAlive = osc;
-  keepAliveGain = g;
-  updateWakeTimer();
+// Verbindungsabbruch (WLAN-Wechsel, Server-Neustart …): neu verbinden.
+function scheduleRestart() {
+  if (!wantPlay) return;
+  clearTimeout(restartTimer);
+  restartTimer = setTimeout(startStream, 2000);
 }
 
 function ensureAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    gainNode = audioCtx.createGain();
-    gainNode.gain.value = parseFloat(el.volume.value);
-    gainNode.connect(audioCtx.destination);
-  }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume().then(() => { startKeepAliveTone(); updateUnlockButton(); }).catch(() => {});
-  } else {
-    startKeepAliveTone();
-  }
-  updateUnlockButton();
+  if (player.paused) startStream();
 }
 
-el.audioUnlock.addEventListener("click", ensureAudio);
+player.addEventListener("playing", updateUnlockButton);
+player.addEventListener("pause", updateUnlockButton);
+player.addEventListener("error", scheduleRestart);
+player.addEventListener("ended", scheduleRestart);
+player.addEventListener("stalled", scheduleRestart);
+
+// Beim Zurückholen der Seite (z. B. nach einem Anruf, der die Wiedergabe
+// unterbrochen hat) wieder anwerfen.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && wantPlay && player.paused) startStream();
+});
+
+// Sperrbildschirm/Kontrollzentrum: Titel anzeigen, Play/Pause bedienbar.
+function setMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const ch = el.channel.value ? "#" + el.channel.value : "Twitch-Chat";
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: "Chat wird vorgelesen", artist: ch, album: "K3113rkind's Twitch TTS",
+    artwork: [{ src: "/static/favicon.svg", sizes: "any", type: "image/svg+xml" }],
+  });
+  navigator.mediaSession.setActionHandler("play", startStream);
+  navigator.mediaSession.setActionHandler("pause", stopStream);
+  navigator.mediaSession.setActionHandler("stop", stopStream);
+}
+
+el.audioUnlock.addEventListener("click", startStream);
 updateUnlockButton();
 
-function stopPlayback() {
-  if (currentSource) {
-    try { currentSource.stop(); } catch (_) { /* schon beendet */ }
-    currentSource = null;
-  }
-}
-
-async function playUtterance(msg) {
-  ensureAudio();
-  stopPlayback();
-
-  const bin = atob(msg.audio);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-
-  const buffer = await audioCtx.decodeAudioData(bytes.buffer);
-  const source = audioCtx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(gainNode);
-  source.onended = () => {
-    if (currentSource === source) {
-      currentSource = null;
-      sendWs({ type: "played", id: msg.id });
-      el.now.textContent = "–";
-    }
-  };
-  currentSource = source;
-  updateUnlockButton();
+function showNow(msg) {
   el.now.innerHTML = "";
   const user = document.createElement("span");
   user.className = "user";
   user.textContent = msg.username;
   el.now.append(user, document.createTextNode(": " + msg.text));
-  source.start();
 }
 
 /* ------------------------------------------------------------ WebSocket */
@@ -193,13 +136,10 @@ function connectWs() {
     const msg = JSON.parse(ev.data);
     switch (msg.type) {
       case "speak":
-        playUtterance(msg).catch((e) => {
-          console.error("Wiedergabe fehlgeschlagen", e);
-          sendWs({ type: "played", id: msg.id }); // Queue nicht blockieren
-        });
+        showNow(msg);
         break;
+      case "done":
       case "stop_audio":
-        stopPlayback();
         el.now.textContent = "–";
         break;
       case "status":
@@ -292,7 +232,6 @@ function applyConfig(c) {
   el.readSmileys.checked = c.read_smileys;
   el.keepAwake.checked = c.keep_speakers_awake;
   el.keepaliveLevel.value = c.keepalive_level;
-  updateWakeTimer();
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
@@ -303,8 +242,6 @@ function applyConfig(c) {
 function updateKeepaliveLabel() {
   const v = parseFloat(el.keepaliveLevel.value);
   el.keepaliveVal.textContent = v === 0 ? "aus" : v.toFixed(3);
-  // Sofort wirksam, ohne Neuladen der Seite.
-  if (keepAliveGain) keepAliveGain.gain.value = v;
 }
 
 el.keepaliveLevel.addEventListener("input", () => { updateKeepaliveLabel(); saveConfig(); });
@@ -312,7 +249,6 @@ el.keepaliveLevel.addEventListener("input", () => { updateKeepaliveLabel(); save
 function updateSliderLabels() {
   el.volumeVal.textContent = Math.round(parseFloat(el.volume.value) * 100) + " %";
   el.speedVal.textContent = parseFloat(el.speed.value).toFixed(2) + "\u00d7";
-  if (gainNode) gainNode.gain.value = parseFloat(el.volume.value);
 }
 
 /* ---------------------------------------------------------------- Events */
@@ -321,7 +257,7 @@ for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.rea
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });
-el.keepAwake.addEventListener("change", updateWakeTimer);
+el.channel.addEventListener("change", setMediaSession);
 for (const slider of [el.volume, el.speed]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
 }

@@ -26,8 +26,13 @@ Danach im Browser öffnen: **http://localhost:8380**
 2. Stimme auswählen
 3. Auf **Vorlesen starten** klicken
 4. Den Browser-Tab geöffnet lassen – der Ton kommt aus diesem Fenster.
-   Der Tab darf im Hintergrund liegen (auch minimiert), nur nicht
-   geschlossen werden.
+   Der Tab darf im Hintergrund liegen (auch minimiert), am Handy darf auch
+   das Display gesperrt sein – nur nicht schließen.
+
+Der Ton kommt als durchgehender Audio-Stream vom Server (wie ein
+Internetradio, Adresse `/stream`). Dadurch spielt auch das iPhone im
+Hintergrund weiter, und auf dem Sperrbildschirm lässt sich die Wiedergabe
+pausieren. Der Ton läuft dabei etwa 1–2 Sekunden hinter der Textanzeige.
 
 Alles wird automatisch gespeichert.
 
@@ -48,7 +53,8 @@ Chats einfach die Stimme nehmen, die zur Hauptsprache passt.
 
 Aufklappbar unter „Weitere Einstellungen":
 
-- **Lautstärke** und **Sprechgeschwindigkeit**
+- **Lautstärke** und **Sprechgeschwindigkeit** (die Lautstärke gilt für alle
+  verbundenen Geräte, weil sie im Stream eingerechnet wird)
 - **Namen vorlesen** – „Peter: hallo" statt nur „hallo"
 - **Wie der Name angekündigt wird** – „Peter: hallo" oder „Peter sagt hallo"
   (bei englischen Stimmen „Peter says hallo")
@@ -59,17 +65,16 @@ Aufklappbar unter „Weitere Einstellungen":
   ein, zwei Nachrichten danach können noch durchrutschen.
 - **Smileys und Emojis mitvorlesen** – betrifft getippte Zeichen wie `:)`,
   `xD` und Unicode-Emojis wie 😀; aus entfernt sie aus der Nachricht
-- **Hintergrundton** – ein durchgehender, sehr leiser Ton. Er sorgt dafür,
-  dass der Browser den Tab als tonausgebend einstuft und ihn im Hintergrund
-  nicht drosselt. Richtig eingestellt ist er, wenn das Lautsprechersymbol am
-  Tab dauerhaft leuchtet und man nichts hört. 0 schaltet ihn ab
-- **Lautsprecher wach halten** – sendet alle acht Sekunden einen kurzen,
-  sehr leisen Tiefton. Verhindert, dass Bluetooth-Boxen oder Soundbars bei
+- **Hintergrundton** – ein durchgehender, sehr leiser Ton im Stream. Er sorgt
+  dafür, dass der Browser den Tab als tonausgebend einstuft. Richtig
+  eingestellt ist er, wenn das Lautsprechersymbol am Tab dauerhaft leuchtet
+  und man nichts hört. 0 schaltet ihn ab
+- **Lautsprecher wach halten** – sendet nach 45 Sekunden Stille einen
+  kurzen, sehr leisen Tiefton. Verhindert, dass Bluetooth-Boxen oder Soundbars bei
   längerer Stille abschalten und den Anfang der nächsten Ansage
   verschlucken. Bei Kopfhörern nicht nötig (die schlafen nicht ein) – wer
   den Impuls hört, schaltet die Option einfach aus. Feineinstellung über
-  die Konstanten `WAKE_*` am Anfang des betreffenden Abschnitts in
-  `static/app.js`
+  die Konstanten `WAKE_*` in `app/stream.py`
 - **Nachrichten mit @Erwähnung vorlesen** – aus bedeutet: Nachrichten, in
   denen jemand mit `@name` angesprochen wird, werden komplett übersprungen
 - **Pause je Zuschauer** – wie lange jemand warten muss, bis er wieder
@@ -108,9 +113,11 @@ Klick, bevor sie Ton abspielen.
 
 - Auf **Ton auf diesem Gerät einschalten** klicken, falls der Knopf da ist
 - Browser-Tab muss geöffnet bleiben (im Hintergrund ist in Ordnung)
-- Am Handy: Stummschalter am Gerät prüfen. Handy-Browser stoppen Tabs im
-  Hintergrund allerdings oft komplett – für Dauerbetrieb einen richtigen
-  Rechner nehmen.
+- Am iPhone: Nach dem Öffnen der Seite einmal **Ton auf diesem Gerät
+  einschalten** oder **Vorlesen starten** antippen – iOS verlangt diesen
+  Tipp, bevor Ton kommen darf. Danach darf das Display gesperrt werden.
+- Läuft die Seite über einen Reverse-Proxy (z. B. Pangolin/Traefik), darf
+  der `/stream` nicht gepuffert oder komprimiert werden.
 
 ## Wieder starten / beenden
 
