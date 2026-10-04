@@ -32,6 +32,13 @@ speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
 
 state: dict = {"twitch": None, "error": None, "loading": False}
 
+# Serialisiert Start/Stopp/Kanalwechsel. Ohne Lock konnten zwei gleichzeitige
+# Aufrufe (z. B. Desktop + iPhone, oder Doppelklick) beide die "läuft schon?"-
+# Prüfung passieren, während die Stimme lädt. Dann entstanden zwei IRC-Clients;
+# der erste wurde überschrieben, aber nie gestoppt und las den alten Kanal
+# weiter – auch nach Stopp und Kanalwechsel.
+control_lock = asyncio.Lock()
+
 
 async def _ensure_loaded(voice: str) -> None:
     if state["loading"]:
@@ -82,6 +89,19 @@ async def get_status():
 
 @app.post("/api/start")
 async def start():
+    async with control_lock:
+        return await _start_locked()
+
+
+async def _stop_client_locked() -> None:
+    client: TwitchChatClient | None = state["twitch"]
+    state["twitch"] = None
+    if client is not None:
+        await client.stop()
+    await speaker.stop()
+
+
+async def _start_locked():
     if state["twitch"] is not None:
         raise HTTPException(409, "Läuft bereits.")
     channel = config.get("channel")
@@ -112,14 +132,12 @@ async def start():
 
 @app.post("/api/stop")
 async def stop():
-    client: TwitchChatClient | None = state["twitch"]
-    if client is None:
-        raise HTTPException(409, "Läuft nicht.")
-    await client.stop()
-    state["twitch"] = None
-    await speaker.stop()
-    log.info("Gestoppt")
-    return _status()
+    async with control_lock:
+        if state["twitch"] is None:
+            raise HTTPException(409, "Läuft nicht.")
+        await _stop_client_locked()
+        log.info("Gestoppt")
+        return _status()
 
 
 @app.post("/api/apply/channel")
@@ -128,20 +146,20 @@ async def apply_channel():
     der Konfiguration hinterlegten Kanal umgehängt (stoppen + neu starten).
     Läuft keine, wird einfach gestartet – der Knopf tut also immer das,
     was der Nutzer erwartet."""
-    channel = config.get("channel")
-    if not channel:
-        raise HTTPException(400, "Bitte zuerst einen Twitch-Kanal eintragen.")
+    async with control_lock:
+        channel = config.get("channel")
+        if not channel:
+            raise HTTPException(400, "Bitte zuerst einen Twitch-Kanal eintragen.")
 
-    client: TwitchChatClient | None = state["twitch"]
-    if client is not None:
-        if client.channel == channel:
-            return _status()  # nichts zu tun
-        await client.stop()
-        state["twitch"] = None
-        await speaker.stop()
-        log.info("Kanalwechsel: #%s -> #%s", client.channel, channel)
+        client: TwitchChatClient | None = state["twitch"]
+        if client is not None:
+            if client.channel == channel.lstrip("#").lower():
+                return _status()  # nichts zu tun
+            old = client.channel
+            await _stop_client_locked()
+            log.info("Kanalwechsel: #%s -> #%s", old, channel)
 
-    return await start()
+        return await _start_locked()
 
 
 @app.post("/api/apply/voice")

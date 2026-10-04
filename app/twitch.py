@@ -136,7 +136,10 @@ class TwitchChatClient:
             if tags.get("room-id"):
                 self.room_id = tags["room-id"]
         elif command == "PRIVMSG":
-            _, _, text = rest.partition(" :")
+            target, _, text = rest.partition(" :")
+            # Zusätzliche Absicherung: nur Nachrichten aus dem eigenen Kanal.
+            if target.strip().lstrip("#").lower() != self.channel:
+                return
             username = tags.get("display-name") or prefix[1:].split("!", 1)[0]
             if tags.get("room-id"):
                 self.room_id = tags["room-id"]
