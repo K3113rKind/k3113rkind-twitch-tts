@@ -7,8 +7,15 @@
 # automatisch (QWEN_DEVICE=auto) und rechnet Qwen dann auf der GPU; Kokoro
 # bleibt auf der CPU, da es dort ohnehin schneller als Echtzeit ist.
 # RX 9070 / 9070 XT (RDNA4) brauchen ROCm 7.2 oder neuer.
+#
+# Kein Autostart: Die GPU teilt sich den Grafikspeicher mit anderen Programmen
+# (z. B. ComfyUI). Qwen 1.7B belegt ~4–5 GB, solange der Container läuft.
+# Starten/Stoppen bei Bedarf:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-amd.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-amd.yml stop
 services:
   twitch-tts:
+    restart: "no"
     build:
       args:
         TORCH_INDEX: https://download.pytorch.org/whl/rocm7.2
