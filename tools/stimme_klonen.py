@@ -86,8 +86,14 @@ def transcribe(path: Path):
     step(f"Abschreiben (Whisper {WHISPER_MODEL})")
     from faster_whisper import WhisperModel
 
+    import soundfile as sf
+
+    # Audio selbst als 16-kHz-Array übergeben: faster-whispers eigener Decoder
+    # (PyAV) passt je nach Versionskombination nicht zusammen.
+    run("ffmpeg", "-loglevel", "error", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "/tmp/whisper.wav")
+    audio, _ = sf.read("/tmp/whisper.wav", dtype="float32")
     model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(str(path), language="de", beam_size=5, word_timestamps=True)
+    segments, _ = model.transcribe(audio, language="de", beam_size=5, word_timestamps=True)
     words = [w for s in segments for w in (s.words or [])]
     for s_word in words:
         s_word.word = s_word.word.strip()
