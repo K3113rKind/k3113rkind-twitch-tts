@@ -190,6 +190,11 @@ def _qwen_text(chunk: str) -> str:
 # Stimme trifft weniger genau. QWEN_CLONE_FAST=1 schaltet es ein.
 QWEN_CLONE_FAST = os.environ.get("QWEN_CLONE_FAST", "0").strip() in ("1", "true", "yes")
 
+# Stimm-Prüfung für eigene Stimmen: unter dieser Ähnlichkeit zur Vorlage
+# wird neu erzeugt (0 = Prüfung aus), höchstens QWEN_SPK_RETRIES Mal.
+QWEN_SPK_MIN = float(os.environ.get("QWEN_SPK_MIN", "0.5") or 0)
+QWEN_SPK_RETRIES = int(os.environ.get("QWEN_SPK_RETRIES", "2") or 0)
+
 QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
 
 # Fertige Qwen-Ausgaben merken: Ein wiederholter Text (Testsatz, "Hallo")
@@ -351,6 +356,25 @@ class QwenEngine:
             self._model = model
             self._repo = repo_id
 
+    def _speaker_similarity(self, item, wav, sr: int) -> float | None:
+        """Kosinus-Ähnlichkeit zwischen Stimm-Fingerabdruck der Vorlage und
+        dem erzeugten Audio (Sprecher-Encoder des Qwen-Modells, 24 kHz)."""
+        try:
+            import torch
+
+            ref = getattr(item, "ref_spk_embedding", None)
+            if ref is None or len(wav) < sr // 4:
+                return None
+            audio = _resample(wav.astype("float32"), sr, 24000)
+            with torch.inference_mode():
+                emb = self._model.model.extract_speaker_embedding(audio=audio, sr=24000)
+                a = emb.float().flatten()
+                b = ref.to(emb.device).float().flatten()
+                return float(torch.nn.functional.cosine_similarity(a, b, dim=0))
+        except Exception as exc:  # Prüfung darf die Ausgabe nie verhindern
+            log.warning("Stimm-Prüfung nicht möglich: %s", exc)
+            return None
+
     def _clone_prompt(self, ref_wav: str, ref_txt: str):
         """Referenz einmal vorberechnen (spart das bei jedem Satz)."""
         from pathlib import Path
@@ -381,13 +405,14 @@ class QwenEngine:
         label = speaker or (ref_wav and ref_wav.rsplit("/", 1)[-1].removesuffix(".wav"))
         for i, chunk in enumerate(chunks, 1):
             with self._lock:
-                torch.manual_seed(QWEN_SEED)
+                trim = 0
+                prompt = None
                 if ref_wav:
                     prompt = self._clone_prompt(ref_wav, ref_txt)
                     ref_code = getattr(prompt[0], "ref_code", None) if prompt else None
                     keep = int(QWEN_REF_DECODE_S * QWEN_STEPS_PER_SECOND)
                     if QWEN_REF_DECODE_S > 0 and ref_code is not None:
-                        self._trim_codes = max(0, int(ref_code.shape[0]) - keep)
+                        trim = max(0, int(ref_code.shape[0]) - keep)
                     gen = lambda: self._model.generate_voice_clone(  # noqa: E731
                         text=_qwen_text(chunk), language="German",
                         voice_clone_prompt=prompt,
@@ -401,17 +426,41 @@ class QwenEngine:
                         temperature=temperature,
                         instruct=instruct or None,
                     )
-                try:
+
+                def run(seed: int):
+                    self._trim_codes = trim
                     try:
-                        wavs, sr = gen()
-                    except Exception as exc:
-                        if not self._compiled:
-                            raise
-                        self._uncompile(exc)
-                        torch.manual_seed(QWEN_SEED)
-                        wavs, sr = gen()
-                finally:
-                    self._trim_codes = 0
+                        torch.manual_seed(seed)
+                        try:
+                            return gen()
+                        except Exception as exc:
+                            if not self._compiled:
+                                raise
+                            self._uncompile(exc)
+                            torch.manual_seed(seed)
+                            return gen()
+                    finally:
+                        self._trim_codes = 0
+
+                wavs, sr = run(QWEN_SEED)
+                # Eigene Stimme: prüfen, ob das Ergebnis nach der Vorlage klingt.
+                # Das Base-Modell greift selten komplett daneben (andere Stimme,
+                # z. B. männlich) – dann mit anderem Startwert neu würfeln.
+                if prompt and QWEN_SPK_MIN > 0:
+                    sim = self._speaker_similarity(prompt[0], wavs[0], int(sr))
+                    best = (sim, wavs, sr)
+                    attempt = 0
+                    while sim is not None and sim < QWEN_SPK_MIN and attempt < QWEN_SPK_RETRIES:
+                        attempt += 1
+                        log.warning("Abschnitt %d/%d klingt nicht nach der Vorlage (Ähnlichkeit %.2f "
+                                    "< %.2f) – neuer Versuch %d", i, len(chunks), sim, QWEN_SPK_MIN, attempt)
+                        wavs, sr = run(QWEN_SEED + attempt)
+                        sim = self._speaker_similarity(prompt[0], wavs[0], int(sr))
+                        if sim is not None and sim > best[0]:
+                            best = (sim, wavs, sr)
+                    sim, wavs, sr = best
+                    if sim is not None:
+                        log.info("Abschnitt %d/%d: Stimm-Ähnlichkeit %.2f", i, len(chunks), sim)
             audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
             # 0,15 s Stille anhängen: kein hartes Ende direkt nach dem letzten Laut
             audio = np.concatenate([audio, np.zeros(int(0.15 * SAMPLE_RATE), dtype=np.float32)])
