@@ -136,6 +136,13 @@ def _qwen_device():
 
     wanted = os.environ.get("QWEN_DEVICE", "auto").strip().lower()
     if wanted != "cpu" and torch.cuda.is_available():
+        if torch.version.hip and os.environ.get("QWEN_MIOPEN", "0") != "1":
+            # AMD: MIOpen sucht für jede neue Eingabelänge erst einen Rechenweg
+            # und landete dabei auf einem langsamen Notweg – der Klang-Decoder
+            # brauchte so 65 s für 9 s Audio, der Desktop fror ein. PyTorchs
+            # eigene GPU-Faltungen umgehen das. QWEN_MIOPEN=1 schaltet es zurück.
+            torch.backends.cudnn.enabled = False
+            log.info("ROCm: MIOpen für Faltungen abgeschaltet (QWEN_MIOPEN=1 zum Testen)")
         # bfloat16 auf der GPU: halber Speicher, deutlich schneller; von Qwen
         # so empfohlen. Auf der CPU bleibt es bei float32 (Skylake ohne bf16).
         return "cuda:0", torch.bfloat16, torch.cuda.get_device_name(0)

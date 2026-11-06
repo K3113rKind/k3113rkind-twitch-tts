@@ -27,3 +27,12 @@ services:
       - seccomp=unconfined
     environment:
       - QWEN_DEVICE=auto
+      # MIOpen ist standardmäßig aus (siehe app/tts.py). Wer es mit
+      # QWEN_MIOPEN=1 testet: schnelle Suche statt Ausprobieren aller Wege,
+      # Ergebnisse überleben Neustarts.
+      - QWEN_MIOPEN=${QWEN_MIOPEN:-0}
+      - MIOPEN_FIND_MODE=FAST
+      - MIOPEN_USER_DB_PATH=/miopen-cache
+      - MIOPEN_CUSTOM_CACHE_DIR=/miopen-cache
+    volumes:
+      - ./models/miopen-cache:/miopen-cache
