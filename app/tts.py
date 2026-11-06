@@ -192,7 +192,7 @@ QWEN_CLONE_FAST = os.environ.get("QWEN_CLONE_FAST", "0").strip() in ("1", "true"
 
 # Stimm-Prüfung für eigene Stimmen: unter dieser Ähnlichkeit zur Vorlage
 # wird neu erzeugt (0 = Prüfung aus), höchstens QWEN_SPK_RETRIES Mal.
-QWEN_SPK_MIN = float(os.environ.get("QWEN_SPK_MIN", "0.5") or 0)
+QWEN_SPK_MIN = float(os.environ.get("QWEN_SPK_MIN", "0.75") or 0)
 QWEN_SPK_RETRIES = int(os.environ.get("QWEN_SPK_RETRIES", "2") or 0)
 
 QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)

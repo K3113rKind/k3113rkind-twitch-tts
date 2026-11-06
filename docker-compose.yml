@@ -29,4 +29,4 @@ services:
       - QWEN_CLONE_FAST=${QWEN_CLONE_FAST:-0}
       # Eigene Stimmen: neu erzeugen, wenn das Ergebnis nicht nach der Vorlage
       # klingt (Ähnlichkeit 0–1, 0 = Prüfung aus)
-      - QWEN_SPK_MIN=${QWEN_SPK_MIN:-0.5}
+      - QWEN_SPK_MIN=${QWEN_SPK_MIN:-0.75}
