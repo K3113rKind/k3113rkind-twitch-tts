@@ -22,6 +22,18 @@ log = logging.getLogger("app")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
+# Oberfläche immer frisch prüfen lassen (mit ETag kostet das nur ein 304).
+# Ohne diesen Header schätzt der Browser die Gültigkeit anhand des
+# Dateialters – nach einem Update zeigte er so tagelang die alte Seite.
+NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+class FreshStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers.update(NO_CACHE)
+        return response
+
 app = FastAPI(title="K3113rkind's Twitch TTS")
 
 config = ConfigStore()
@@ -262,14 +274,14 @@ async def stream(request: Request):
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers=NO_CACHE)
 
 
 @app.get("/overlay")
 async def overlay():
     """Schlanke Seite für OBS-Browserquellen: nur Anzeige und Ton, keine
     Bedienelemente. Mit ?text=0 wird auch die Textanzeige ausgeblendet."""
-    return FileResponse(STATIC_DIR / "overlay.html")
+    return FileResponse(STATIC_DIR / "overlay.html", headers=NO_CACHE)
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", FreshStaticFiles(directory=STATIC_DIR), name="static")
