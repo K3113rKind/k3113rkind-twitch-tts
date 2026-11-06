@@ -261,6 +261,14 @@ class ChatSpeaker:
         """Qwen auf der CPU: wartende Nachrichten (höchstens qwen_batch) in
         einer Gruppe vorab berechnen. Läuft, während die aktuelle Nachricht
         noch spielt – so hält der CT auch mit einem vollen Chat Schritt."""
+        # Darf nie nach außen werfen: läuft u. a. direkt im Twitch-Empfang –
+        # ein Fehler hier hat sonst die Chat-Verbindung gekappt.
+        try:
+            self._prefetch_inner()
+        except Exception as exc:
+            log.warning("Gruppenberechnung nicht gestartet: %s", exc)
+
+    def _prefetch_inner(self) -> None:
         if self._batch_task and not self._batch_task.done():
             return
         cfg = self.config.as_dict()

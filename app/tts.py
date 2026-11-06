@@ -113,7 +113,8 @@ def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
             limit = min(max_chars, max(int(limit * 1.2), int(len(head) * QWEN_CHUNK_GROWTH)))
         # winzigen Rest an den vorletzten Abschnitt hängen, wenn er passt
         if len(chunks) > 1 and len(chunks[-1]) < 40 and len(chunks[-2]) + 1 + len(chunks[-1]) <= max_chars:
-            chunks[-2] += " " + chunks.pop()
+            tail = chunks.pop()  # erst entnehmen: chunks[-2] += chunks.pop() trifft
+            chunks[-1] += " " + tail  # sonst nach dem pop den falschen Index
         return chunks
     text = text.strip()
     if len(text) <= max_chars:
