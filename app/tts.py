@@ -551,8 +551,10 @@ class QwenEngine:
                 audio = np.concatenate([audio, np.zeros(int(0.15 * SAMPLE_RATE), dtype=np.float32)])
                 out.append((audio, sim))
         dur = sum(len(a) for a, _ in out) / SAMPLE_RATE
-        log.info("Qwen %s Gruppe: %d Nachrichten, %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
-                 repo_id.split("-12Hz-")[-1], n, took, dur, took / dur if dur else 0.0)
+        sims = " ".join("–" if sim is None else f"{sim:.2f}" for _, sim in out)
+        log.info("Qwen %s Gruppe: %d Nachrichten, %.1f s Rechenzeit für %.1f s Audio (RTF %.2f), "
+                 "Stimm-Ähnlichkeit: %s", repo_id.split("-12Hz-")[-1], n, took, dur,
+                 took / dur if dur else 0.0, sims)
         return out, took
 
 
