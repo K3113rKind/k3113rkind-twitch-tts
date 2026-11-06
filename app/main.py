@@ -177,6 +177,36 @@ async def apply_voice():
     return _status()
 
 
+# Obergrenze für Testtexte: lang genug für Absätze, kurz genug, dass ein
+# versehentlich eingefügtes Dokument nicht minutenlang die Queue blockiert.
+MAX_SAY_CHARS = 2000
+
+
+@app.post("/api/say")
+async def say(body: dict):
+    """Testtext vorlesen, ohne dass ein Twitch-Chat laufen muss. Nutzt die
+    gerade eingestellte Stimme und Geschwindigkeit."""
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise HTTPException(400, "Bitte einen Text eingeben.")
+    if len(text) > MAX_SAY_CHARS:
+        raise HTTPException(400, f"Text zu lang (max. {MAX_SAY_CHARS} Zeichen).")
+
+    voice = config.get("voice")
+    if not is_available(voice):
+        usable = available_voices()
+        if not usable:
+            raise HTTPException(400, "Keine Stimmen installiert – bitte install.sh erneut ausführen.")
+        voice = usable[0]["key"]
+    try:
+        await _ensure_loaded(voice)
+    except Exception as exc:
+        raise HTTPException(500, f"Stimme konnte nicht geladen werden: {exc}")
+
+    await speaker.say_text(text)
+    return {"ok": True, "queue_size": speaker.queue_size}
+
+
 @app.post("/api/skip")
 async def skip():
     speaker.skip()

@@ -16,6 +16,7 @@ const el = {
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
+  sayText: $("say-text"), sayBtn: $("say"),
 };
 
 /* --------------------------------------------------------- Audio-Player */
@@ -136,10 +137,14 @@ function connectWs() {
     const msg = JSON.parse(ev.data);
     switch (msg.type) {
       case "speak":
+        speaking = true;
+        updateSkipButton();
         showNow(msg);
         break;
       case "done":
       case "stop_audio":
+        speaking = false;
+        updateSkipButton();
         el.now.textContent = "–";
         break;
       case "status":
@@ -153,6 +158,11 @@ function connectWs() {
 }
 
 /* ---------------------------------------------------------------- Status */
+// Überspringen geht auch ohne laufenden Chat, z. B. bei einem Testtext.
+let running = false;
+let speaking = false;
+function updateSkipButton() { el.skip.disabled = !running && !speaking; }
+
 function applyStatus(s) {
   el.dot.className = "dot " + (s.connected ? "ok" : s.running ? "warn" : "");
   el.statusText.textContent = s.connected
@@ -160,7 +170,8 @@ function applyStatus(s) {
     : s.running ? "Verbinde …" : "Nicht verbunden";
   el.startstop.textContent = s.running ? "Vorlesen stoppen" : "Vorlesen starten";
   el.startstop.classList.toggle("running", s.running);
-  el.skip.disabled = !s.running;
+  running = s.running;
+  updateSkipButton();
   fillVoices(s.voices || []);
   if (s.error) showError(s.error); else hideError();
 }
@@ -323,6 +334,46 @@ el.startstop.addEventListener("click", async () => {
   } finally {
     el.startstop.disabled = false;
     refreshStatus();
+  }
+});
+
+/* ------------------------------------------------------------- Testtext */
+el.sayBtn.addEventListener("click", async () => {
+  const text = el.sayText.value.trim();
+  if (!text) { el.sayText.focus(); return; }
+  ensureAudio(); // Nutzer-Geste: löst die Autoplay-Sperre des Browsers
+  el.sayBtn.disabled = true;
+  try {
+    // Aktuelle Stimme/Geschwindigkeit sofort speichern, nicht erst nach 300 ms
+    clearTimeout(saveTimer);
+    await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectConfig()),
+    });
+    const res = await fetch("/api/say", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showError(body.detail || res.statusText);
+    } else {
+      hideError();
+    }
+  } catch (e) {
+    showError("Vorlesen fehlgeschlagen: " + e);
+  } finally {
+    el.sayBtn.disabled = false;
+  }
+});
+
+// Strg+Enter (bzw. Cmd+Enter) im Textfeld = Vorlesen
+el.sayText.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault();
+    el.sayBtn.click();
   }
 });
 

@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 class QueuedMessage:
     username: str
     text: str
+    raw: bool = False  # Testtext aus der GUI: ohne Namensansage vorlesen
 
 
 class Broadcaster:
@@ -140,6 +141,15 @@ class ChatSpeaker:
         self._queue_event.set()
         await self._push_queue_state()
 
+    async def say_text(self, text: str) -> None:
+        """Testtext aus der GUI vorlesen – ohne Twitch, ohne Filter, Cooldown
+        und Queue-Limit, ohne Namensansage. Reiht sich normal in die
+        Warteschlange ein, läuft also nie über eine Chat-Nachricht drüber."""
+        self.start()
+        self._queue.append(QueuedMessage(username="Test", text=text, raw=True))
+        self._queue_event.set()
+        await self._push_queue_state()
+
     # ---------------------------------------------------------------- worker
     def start(self) -> None:
         if self._worker is None or self._worker.done():
@@ -195,7 +205,7 @@ class ChatSpeaker:
                 )
             voice = usable[0]["key"]
 
-        if cfg["read_username"]:
+        if cfg["read_username"] and not msg.raw:
             if cfg["username_style"] == "sagt":
                 # Verb passend zur Sprache der gewählten Stimme
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
