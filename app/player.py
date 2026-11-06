@@ -36,6 +36,7 @@ class QueuedMessage:
     text: str
     raw: bool = False  # Testtext aus der GUI: ohne Namensansage vorlesen
     arrived: float = field(default_factory=time.monotonic)  # für die Wartezeit-Anzeige
+    batched: bool = False  # steckt in einer (laufenden/fertigen) Gruppenberechnung
 
 
 class Broadcaster:
@@ -142,9 +143,15 @@ class ChatSpeaker:
         self._last_spoken[user_key] = now
         self._queue.append(QueuedMessage(username=username, text=spoken))
         # Queue limit: drop oldest instead of building up delay.
+        # Nachrichten, die schon in einer Gruppe berechnet werden, bleiben
+        # geschützt – sonst wäre die Rechenzeit verloren. Verworfen wird die
+        # älteste noch nicht berechnete.
         limit = cfg["queue_limit"]
         while len(self._queue) > limit:
-            self._queue.popleft()
+            victim = next((m for m in self._queue if not m.batched), None)
+            if victim is None:
+                break
+            self._queue.remove(victim)
             self.dropped_total += 1
         self._queue_event.set()
         self._maybe_prefetch()
@@ -266,8 +273,10 @@ class ChatSpeaker:
             return
         if not is_qwen(voice):
             return
-        texts = [self._chunks(self._spoken_text(m, cfg, voice), voice)[0]
-                 for m in list(self._queue)[:size]]
+        picked = list(self._queue)[:size]
+        texts = [self._chunks(self._spoken_text(m, cfg, voice), voice)[0] for m in picked]
+        for m in picked:
+            m.batched = True
         _, temperature, instruct = self._gen_params(cfg)
         self._batch_task = asyncio.ensure_future(asyncio.to_thread(
             self.tts.prefetch_batch, texts, voice, temperature, instruct))
