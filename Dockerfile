@@ -31,6 +31,20 @@ RUN case "$TORCH_INDEX" in *cpu) ;; *) apt-get update \
       && apt-get install -y --no-install-recommends gcc libc6-dev \
       && rm -rf /var/lib/apt/lists/* ;; esac
 
+# Eigene Stimmen aus der Weboberfläche erstellen (app/voice_clone.py):
+# ffmpeg, Demucs (Musik entfernen), faster-whisper (Abschrift), yt-dlp mit
+# Deno (YouTube verlangt seit Ende 2025 eine JavaScript-Laufzeit),
+# python-multipart (Datei-Upload). Eigene Schichten nach Torch, damit dessen
+# großer Download im Cache bleibt.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir python-multipart demucs faster-whisper "yt-dlp[default]" \
+       --extra-index-url "$TORCH_INDEX" \
+    && python -c "import io, urllib.request, zipfile; z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip').read())); z.extract('deno', '/usr/local/bin')" \
+    && chmod +x /usr/local/bin/deno && deno --version | head -1 \
+    && python -c "import torch, demucs, faster_whisper; print('Torch nach Klon-Werkzeugen:', torch.__version__)"
+
 COPY app ./app
 COPY static ./static
 

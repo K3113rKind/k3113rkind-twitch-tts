@@ -17,6 +17,9 @@ const el = {
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"),
+  cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
+  cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
+  cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
   temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
 };
@@ -184,6 +187,9 @@ function connectWs() {
         break;
       case "status":
         applyStatus(msg);
+        break;
+      case "voices_changed":
+        refreshStatus();
         break;
       case "error":
         stopGenerating();
@@ -476,9 +482,94 @@ el.sayText.addEventListener("keydown", (ev) => {
   }
 });
 
+/* ------------------------------------------------ Eigene Stimme erstellen */
+let clonePoll = null;
+
+function showCloneStatus(job) {
+  const lines = [...(job.log || [])];
+  if (job.error) lines.push("Fehler: " + job.error);
+  el.cloneStatus.textContent = lines.join("\n");
+  el.cloneStatus.classList.toggle("hidden", lines.length === 0);
+  el.cloneStatus.classList.toggle("err", !!job.error);
+  el.cloneStart.disabled = !!job.running;
+  el.cloneStart.textContent = job.running ? `Erstelle „${job.name}“ …` : "Stimme erstellen";
+  if (job.result) {
+    const r = job.result;
+    el.cloneStatus.textContent += `\nVerwendet: ${r.start}–${r.end} s (${r.seconds} s) aus der Aufnahme.`;
+    if (el.cloneResult.dataset.name !== r.name) {
+      el.cloneText.value = r.text;
+      el.cloneResult.dataset.name = r.name;
+    }
+    el.cloneResult.classList.remove("hidden");
+  }
+}
+
+async function pollClone() {
+  const job = await fetch("/api/clone").then((r) => r.json()).catch(() => null);
+  if (!job) return;
+  showCloneStatus(job);
+  if (!job.running) {
+    clearInterval(clonePoll);
+    clonePoll = null;
+    refreshStatus();
+  }
+}
+
+async function startClone(overwrite = false) {
+  const name = el.cloneName.value.trim().toLowerCase();
+  const url = el.cloneUrl.value.trim();
+  const file = el.cloneFile.files[0];
+  if (!name) { showError("Bitte einen Namen für die Stimme eingeben."); el.cloneName.focus(); return; }
+  if (!url && !file) { showError("Bitte einen Video-Link eingeben oder eine Datei auswählen."); return; }
+  if (url && file) { showError("Bitte entweder Link oder Datei – nicht beides."); return; }
+  hideError();
+  const form = new FormData();
+  form.append("name", name);
+  form.append("seconds", el.cloneSeconds.value || "20");
+  form.append("overwrite", overwrite ? "true" : "false");
+  if (url) form.append("url", url); else form.append("file", file);
+  el.cloneStart.disabled = true;
+  el.cloneResult.classList.add("hidden");
+  el.cloneResult.dataset.name = "";
+  const res = await fetch("/api/clone", { method: "POST", body: form });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    if (body.detail === "EXISTS") {
+      if (window.confirm(`Die Stimme „${name}“ gibt es schon. Überschreiben?`)) return startClone(true);
+      el.cloneStart.disabled = false;
+      return;
+    }
+    showError(body.detail || "Läuft bereits.");
+  } else if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    showError(body.detail || res.statusText);
+    el.cloneStart.disabled = false;
+    return;
+  }
+  showCloneStatus(await res.json().catch(() => ({ running: true, name, log: [] })));
+  if (!clonePoll) clonePoll = setInterval(pollClone, 1500);
+}
+
+el.cloneStart.addEventListener("click", () => startClone(false));
+// Name: nur erlaubte Zeichen (klein, ohne Leerzeichen)
+el.cloneName.addEventListener("input", () => {
+  el.cloneName.value = el.cloneName.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+});
+el.cloneTextSave.addEventListener("click", async () => {
+  const res = await fetch("/api/clone/text", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: el.cloneResult.dataset.name, text: el.cloneText.value }),
+  });
+  if (res.ok) { hideError(); el.cloneTextSave.textContent = "Gespeichert ✓"; setTimeout(() => (el.cloneTextSave.textContent = "Text speichern"), 2000); }
+  else { const b = await res.json().catch(() => ({})); showError(b.detail || "Speichern fehlgeschlagen"); }
+});
+
 /* ------------------------------------------------------------------ Init */
 (async function init() {
   applyConfig(await fetch("/api/config").then((r) => r.json()));
+  pollClone(); // läuft gerade eine Erstellung (z. B. nach Neuladen)? Dann weiter anzeigen
+  fetch("/api/clone").then((r) => r.json()).then((j) => { if (j.running && !clonePoll) clonePoll = setInterval(pollClone, 1500); }).catch(() => {});
   connectWs();
   setInterval(refreshStatus, 5000);
 })();

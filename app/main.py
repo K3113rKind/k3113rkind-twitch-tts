@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
+import shutil
+import sys
+import tempfile
+from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket,
+                     WebSocketDisconnect)
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,7 +23,7 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import available_voices, is_available
+from .voices import available_voices, is_available, ref_dir, sync_clone_voices
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -240,6 +247,116 @@ async def warmup_on_start():
     if os.environ.get("QWEN_WARMUP", "1") == "0":
         return
     asyncio.create_task(asyncio.to_thread(tts.warmup, config.get("voice")))
+
+
+# ------------------------------------------------- eigene Stimme erzeugen
+CLONE_NAME = re.compile(r"^[a-z0-9_-]{1,40}$")
+UPLOAD_TYPES = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".mp4", ".webm", ".mkv"}
+clone_job: dict = {"running": False, "name": None, "log": deque(maxlen=40),
+                   "result": None, "error": None}
+
+
+async def _run_clone(source: str, name: str, seconds: float, root: str) -> None:
+    """Pipeline als eigener Prozess (app/voice_clone.py); Ausgabe -> Job-Log.
+    root: temporärer Ordner (Upload + Arbeitsdateien), wird danach gelöscht."""
+    work = str(Path(root) / "arbeit")
+    env = {**os.environ, "HF_HUB_OFFLINE": "0", "TORCH_HOME": "/hf/torch",
+           "PYTHONUNBUFFERED": "1"}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.voice_clone", "--quelle", source, "--name", name,
+            "--sekunden", str(seconds), "--arbeit", work,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+        )
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").rstrip()
+            if not line:
+                continue
+            log.info("Klonen: %s", line)
+            if line.startswith("ERGEBNIS "):
+                clone_job["result"] = json.loads(line[len("ERGEBNIS "):])
+            elif line.startswith("SCHRITT: "):
+                clone_job["log"].append(line[len("SCHRITT: "):])
+            else:
+                clone_job["last_line"] = line[-300:]
+        code = await proc.wait()
+        if code != 0 or not clone_job["result"]:
+            clone_job["error"] = clone_job.get("last_line") or f"Abbruch mit Code {code}"
+        else:
+            clone_job["log"].append("Fertig – die Stimme steht jetzt im Dropdown.")
+            sync_clone_voices()
+            await broadcaster.send({"type": "voices_changed"})
+    except Exception as exc:
+        clone_job["error"] = str(exc)
+    finally:
+        clone_job["running"] = False
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@app.post("/api/clone")
+async def clone_start(
+    name: str = Form(...),
+    seconds: float = Form(20),
+    url: str = Form(""),
+    overwrite: bool = Form(False),
+    file: UploadFile | None = File(None),
+):
+    """Neue eigene Stimme aus Video-Link (YouTube/Twitch) oder Audiodatei."""
+    name = name.strip().lower()
+    if not CLONE_NAME.match(name):
+        raise HTTPException(400, "Name bitte nur aus a–z, 0–9, - und _ (max. 40 Zeichen).")
+    if clone_job["running"]:
+        raise HTTPException(409, f"Es wird gerade schon „{clone_job['name']}“ erstellt.")
+    if (ref_dir() / f"{name}.wav").exists() and not overwrite:
+        raise HTTPException(409, "EXISTS")
+    url = url.strip()
+    has_file = file is not None and file.filename
+    if bool(url) == bool(has_file):
+        raise HTTPException(400, "Bitte entweder einen Video-Link oder eine Datei angeben.")
+    if url and not re.match(r"^https?://", url):
+        raise HTTPException(400, "Der Link muss mit http:// oder https:// beginnen.")
+    seconds = min(max(float(seconds), 5.0), 30.0)
+
+    work = tempfile.mkdtemp(prefix="klon-")
+    source = url
+    if has_file:
+        suffix = Path(file.filename).suffix.lower()
+        if suffix not in UPLOAD_TYPES:
+            raise HTTPException(400, "Bitte eine Audio- oder Videodatei (.wav, .mp3, …) hochladen.")
+        source = str(Path(work) / f"upload{suffix}")
+        with open(source, "wb") as fh:
+            shutil.copyfileobj(file.file, fh)
+
+    clone_job.update(running=True, name=name, result=None, error=None, last_line=None)
+    clone_job["log"].clear()
+    clone_job["log"].append("Gestartet …")
+    asyncio.create_task(_run_clone(source, name, seconds, work))
+    return _clone_status()
+
+
+def _clone_status() -> dict:
+    return {k: (list(v) if isinstance(v, deque) else v)
+            for k, v in clone_job.items() if k != "last_line"}
+
+
+@app.get("/api/clone")
+async def clone_status():
+    return _clone_status()
+
+
+@app.put("/api/clone/text")
+async def clone_text(body: dict):
+    """Abschrift einer eigenen Stimme korrigieren (muss wortgenau stimmen)."""
+    name = str(body.get("name", "")).strip().lower()
+    text = str(body.get("text", "")).strip()
+    if not CLONE_NAME.match(name) or not (ref_dir() / f"{name}.wav").exists():
+        raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
+    if not text:
+        raise HTTPException(400, "Der Text darf nicht leer sein.")
+    (ref_dir() / f"{name}.txt").write_text(text + "\n", encoding="utf-8")
+    if clone_job.get("result") and clone_job["result"].get("name") == name:
+        clone_job["result"]["text"] = text
+    return {"ok": True}
 
 
 @app.post("/api/skip")

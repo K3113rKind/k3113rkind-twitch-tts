@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=13">
+<link rel="stylesheet" href="/static/style.css?v=14">
 </head>
 <body>
 <main class="panel">
@@ -20,6 +20,10 @@
   <div id="error-banner" class="banner hidden"></div>
 
   <section class="group">
+    <div class="actions twitch-actions">
+      <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
+      <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
+    </div>
     <label>Twitch-Kanal
       <span class="row">
         <input id="channel" type="text" placeholder="z. B. bonjwa" autocomplete="off" spellcheck="false">
@@ -44,10 +48,6 @@
     <button id="audio-unlock" type="button" class="btn-unlock hidden">🔊 Ton auf diesem Gerät einschalten</button>
     <div class="now" id="now-playing">–</div>
     <div class="perf" id="perf"></div>
-    <div class="actions">
-      <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
-      <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
-    </div>
     <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, auf dem Handy darf auch das Display gesperrt sein. Nur nicht schließen. Der Ton läuft etwa 1–2 Sekunden hinter der Anzeige.</p>
   </section>
 
@@ -59,6 +59,36 @@
       <button id="say-cancel" type="button" class="btn-secondary" title="Testtext abbrechen (laufend und wartend)">Abbrechen</button>
       <button id="say" type="button" class="btn-secondary" title="Strg+Enter">Vorlesen</button>
     </div>
+  </section>
+
+  <section class="group">
+    <label>Eigene Stimme erstellen <span class="muted">(Qwen – Stimme aus einem Video oder einer Aufnahme übernehmen)</span>
+      <input id="clone-url" type="url" placeholder="Link zu YouTube- oder Twitch-Video …" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="file-row">oder Datei hochladen <span class="muted">(.wav, .mp3, …)</span>
+      <input id="clone-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.flac,.mp4,.webm,.mkv,audio/*,video/*">
+    </label>
+    <div class="cols">
+      <label>Name der Stimme <span class="req">*</span>
+        <input id="clone-name" type="text" placeholder="z. B. candy" maxlength="40" autocomplete="off" spellcheck="false" required>
+      </label>
+      <label>Länge der Vorlage (Sek.)
+        <input id="clone-seconds" type="number" min="5" max="30" step="1" value="20">
+      </label>
+    </div>
+    <div class="actions">
+      <button id="clone-start" type="button" class="btn-secondary">Stimme erstellen</button>
+    </div>
+    <div id="clone-status" class="clone-status hidden"></div>
+    <div id="clone-result" class="hidden">
+      <label>Erkannter Text der Vorlage <span class="muted">(muss wortgenau stimmen – bei Fehlern korrigieren)</span>
+        <textarea id="clone-text" class="say-text" rows="3"></textarea>
+      </label>
+      <div class="actions">
+        <button id="clone-text-save" type="button" class="btn-secondary">Text speichern</button>
+      </div>
+    </div>
+    <p class="hint">Nur Stimmen verwenden, für die du die Erlaubnis hast. Das Erstellen dauert je nach Rechner einige Minuten; beim ersten Mal werden zusätzlich Modelle geladen (mehrere GB).</p>
   </section>
 
   <details class="group advanced">
@@ -119,6 +149,6 @@
     </label>
   </details>
 </main>
-<script src="/static/app.js?v=13"></script>
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

@@ -12,12 +12,12 @@ services:
       # Einstellungen – überleben Updates und Neustarts
       - ./config:/config
       # Qwen3-TTS (Test): Hugging-Face-Cache mit den Modellen, z. B. der vom
-      # Benchmark (QWEN_HF_DIR=/root/qwen-test/hf in .env). Ohne Eintrag
-      # bleibt der Ordner leer und die Qwen-Stimmen erscheinen nicht.
-      - ${QWEN_HF_DIR:-./models/qwen-hf}:/hf:ro
-      # Eigene Stimmen (Test): Referenzen NAME.wav + NAME.txt, befüllt von
-      # tools/stimme-klonen.sh (QWEN_REF_DIR in .env)
-      - ${QWEN_REF_DIR:-./models/qwen-ref}:/ref:ro
+      # Benchmark (QWEN_HF_DIR=/root/qwen-test/hf in .env). Beschreibbar, weil
+      # "Eigene Stimme erstellen" dort Whisper/Demucs/Base-Modelle ablegt.
+      - ${QWEN_HF_DIR:-./models/qwen-hf}:/hf
+      # Eigene Stimmen (Test): Referenzen NAME.wav + NAME.txt, befüllt von der
+      # Weboberfläche oder tools/stimme-klonen.sh (QWEN_REF_DIR in .env)
+      - ${QWEN_REF_DIR:-./models/qwen-ref}:/ref
     environment:
       - TZ=Europe/Berlin
       - HF_HOME=/hf
