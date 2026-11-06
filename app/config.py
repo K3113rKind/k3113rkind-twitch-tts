@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .voices import DEFAULT_VOICE, VOICES
+from .voices import DEFAULT_VOICE, VOICES, sync_clone_voices
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ class ConfigStore:
                     continue
             elif key == "voice":
                 value = str(value).strip()
+                sync_clone_voices()
                 if value not in VOICES:
                     continue  # unbekannte Stimme ignorieren
             else:

@@ -15,6 +15,9 @@ services:
       # Benchmark (QWEN_HF_DIR=/root/qwen-test/hf in .env). Ohne Eintrag
       # bleibt der Ordner leer und die Qwen-Stimmen erscheinen nicht.
       - ${QWEN_HF_DIR:-./models/qwen-hf}:/hf:ro
+      # Eigene Stimmen (Test): Referenzen NAME.wav + NAME.txt, befüllt von
+      # tools/stimme-klonen.sh (QWEN_REF_DIR in .env)
+      - ${QWEN_REF_DIR:-./models/qwen-ref}:/ref:ro
     environment:
       - TZ=Europe/Berlin
       - HF_HOME=/hf

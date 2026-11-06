@@ -70,6 +70,45 @@ for _size, _repo in QWEN_MODELS.items():
             "lang": "d",  # für "sagt"/"says" bei der Namensansage
         }
 
+# --- Eigene Stimmen (Qwen-Stimmklonen, Test) ---------------------------------
+# Jedes Paar NAME.wav + NAME.txt im Referenzordner (Mount /ref, befüllt von
+# tools/stimme-klonen.sh) wird zu je einer Stimme pro Base-Modell. Der Ordner
+# wird bei jedem Abruf neu gelesen – neue Stimmen erscheinen ohne Neustart.
+QWEN_BASE_MODELS = {
+    "0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+}
+CLONE_ENGINE = "qwen-clone"
+
+
+def ref_dir() -> Path:
+    return Path(os.environ.get("QWEN_REF_PATH", "/ref"))
+
+
+def sync_clone_voices() -> None:
+    """Eigene Stimmen mit dem Referenzordner abgleichen (VOICES in place)."""
+    wanted: dict[str, dict] = {}
+    folder = ref_dir()
+    if folder.is_dir():
+        for wav in sorted(folder.glob("*.wav")):
+            txt = wav.with_suffix(".txt")
+            if not txt.is_file():
+                continue
+            for size, repo in QWEN_BASE_MODELS.items():
+                wanted[f"klon-{size}-{wav.stem}"] = {
+                    "label": f"{wav.stem} · eigene Stimme, Qwen {size.upper()} – Deutsch (Test, langsam)",
+                    "engine": CLONE_ENGINE,
+                    "model": repo,
+                    "ref_wav": str(wav),
+                    "ref_txt": str(txt),
+                    "lang": "d",
+                }
+    for key in [k for k, v in list(VOICES.items()) if v.get("engine") == CLONE_ENGINE]:
+        if key not in wanted:
+            VOICES.pop(key, None)
+    VOICES.update(wanted)
+
+
 DEFAULT_VOICE = "victoria"
 
 
@@ -105,14 +144,23 @@ def hf_snapshot(repo_id: str) -> Path | None:
     return None
 
 
+def is_qwen(voice_key: str) -> bool:
+    return engine(voice_key) in ("qwen", CLONE_ENGINE)
+
+
 def is_available(voice_key: str) -> bool:
     """Alle Dateien vorhanden, die diese Stimme braucht?"""
+    if voice_key.startswith("klon-"):
+        sync_clone_voices()
     if voice_key not in VOICES:
         return False
-    if engine(voice_key) == "qwen":
+    if is_qwen(voice_key):
+        spec = VOICES[voice_key]
         return (
             importlib.util.find_spec("qwen_tts") is not None
-            and hf_snapshot(VOICES[voice_key]["model"]) is not None
+            and hf_snapshot(spec["model"]) is not None
+            and (engine(voice_key) == "qwen"
+                 or (Path(spec["ref_wav"]).is_file() and Path(spec["ref_txt"]).is_file()))
         )
     return (
         backbone_path(voice_key).is_file()
@@ -123,8 +171,9 @@ def is_available(voice_key: str) -> bool:
 
 def available_voices() -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
+    sync_clone_voices()
     return [
         {"key": key, "label": data["label"]}
-        for key, data in VOICES.items()
+        for key, data in list(VOICES.items())
         if is_available(key)
     ]

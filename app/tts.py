@@ -108,8 +108,9 @@ def _split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
 
 
 class QwenEngine:
-    """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
-    Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
+    """Qwen3-TTS auf CPU – Preset-Stimmen (CustomVoice-Modelle) und eigene
+    Stimmen (Base-Modelle mit Referenzaufnahme). Hält nur ein Modell im RAM –
+    beim Wechsel wird das vorherige freigegeben.
 
     Stellschraube QWEN_THREADS (Umgebungsvariable, .env): Anzahl
     Torch-Threads; 0 = alle sichtbaren Kerne. Oft schneller: nur echte Kerne
@@ -123,6 +124,8 @@ class QwenEngine:
         self._repo: str | None = None
         self._model = None
         self._lock = threading.Lock()
+        # Vorberechnete Referenzen fürs Klonen: (Modell, wav, Änderungszeit)
+        self._clone_prompts: dict[tuple, object] = {}
 
     def load(self, repo_id: str) -> None:
         with self._lock:
@@ -139,6 +142,7 @@ class QwenEngine:
             from qwen_tts import Qwen3TTSModel
 
             self._model = None
+            self._clone_prompts.clear()
             gc.collect()
             threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
             if threads > 0:
@@ -150,19 +154,42 @@ class QwenEngine:
             self._model = model
             self._repo = repo_id
 
-    def synthesize(self, text: str, repo_id: str, speaker: str):
+    def _clone_prompt(self, ref_wav: str, ref_txt: str):
+        """Referenz einmal vorberechnen (spart das bei jedem Satz)."""
+        from pathlib import Path
+
+        key = (self._repo, ref_wav, Path(ref_wav).stat().st_mtime, Path(ref_txt).stat().st_mtime)
+        if key not in self._clone_prompts:
+            text = Path(ref_txt).read_text(encoding="utf-8").strip()
+            t0 = time.perf_counter()
+            self._clone_prompts[key] = self._model.create_voice_clone_prompt(
+                ref_audio=ref_wav, ref_text=text, x_vector_only_mode=False
+            )
+            log.info("Referenz %s vorbereitet in %.1f s", Path(ref_wav).name, time.perf_counter() - t0)
+        return self._clone_prompts[key]
+
+    def synthesize(self, text: str, repo_id: str, speaker: str | None = None,
+                   ref_wav: str | None = None, ref_txt: str | None = None):
         import numpy as np
 
         self.load(repo_id)
         chunks = _split_for_qwen(text)
         parts = []
         t0 = time.perf_counter()
+        label = speaker or (ref_wav and ref_wav.rsplit("/", 1)[-1].removesuffix(".wav"))
         for i, chunk in enumerate(chunks, 1):
             with self._lock:
-                wavs, sr = self._model.generate_custom_voice(
-                    text=chunk, language="German", speaker=speaker,
-                    max_new_tokens=_qwen_token_budget(chunk),
-                )
+                if ref_wav:
+                    wavs, sr = self._model.generate_voice_clone(
+                        text=chunk, language="German",
+                        voice_clone_prompt=self._clone_prompt(ref_wav, ref_txt),
+                        max_new_tokens=_qwen_token_budget(chunk),
+                    )
+                else:
+                    wavs, sr = self._model.generate_custom_voice(
+                        text=chunk, language="German", speaker=speaker,
+                        max_new_tokens=_qwen_token_budget(chunk),
+                    )
             audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
             dur = len(audio) / SAMPLE_RATE
             if dur >= _qwen_token_budget(chunk) / QWEN_STEPS_PER_SECOND - 0.5:
@@ -178,7 +205,7 @@ class QwenEngine:
         dur = len(samples) / SAMPLE_RATE
         log.info(
             "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Abschnitt%s)",
-            repo_id.split("-12Hz-")[-1], speaker, took, dur, took / dur if dur else 0.0,
+            repo_id.split("-12Hz-")[-1], label, took, dur, took / dur if dur else 0.0,
             len(chunks), "" if len(chunks) == 1 else "e",
         )
         return samples
@@ -200,7 +227,7 @@ class TTS:
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
-        if voices_mod.engine(voice_key) == "qwen":
+        if voices_mod.is_qwen(voice_key):
             if not voices_mod.is_available(voice_key):
                 raise FileNotFoundError(
                     f"Für die Stimme '{spec['label']}' fehlt das Qwen-Modell oder das Paket qwen-tts."
@@ -244,16 +271,21 @@ class TTS:
         self._ready = True
 
     def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
+        if voice_key.startswith("klon-"):
+            voices_mod.sync_clone_voices()
         if voice_key not in voices_mod.VOICES:
             voice_key = voices_mod.DEFAULT_VOICE
 
         spec = voices_mod.VOICES[voice_key]
-        if voices_mod.engine(voice_key) == "qwen":
+        if voices_mod.is_qwen(voice_key):
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
             t_load = time.perf_counter()
             self.load(voice_key)
             t0 = time.perf_counter()
-            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"])
+            samples = self._qwen.synthesize(
+                text, spec["model"], spec.get("speaker"),
+                spec.get("ref_wav"), spec.get("ref_txt"),
+            )
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")
             return SynthesisResult(
