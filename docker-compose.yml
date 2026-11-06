@@ -23,3 +23,5 @@ services:
       - HF_HOME=/hf
       # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren Kerne
       - QWEN_THREADS=${QWEN_THREADS:-0}
+      # Füllzeichen hinter dem Satzende gegen verschluckte letzte Laute (0 = aus)
+      - QWEN_END_FIX=${QWEN_END_FIX:-1}

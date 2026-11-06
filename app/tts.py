@@ -167,6 +167,23 @@ def _take_head(text: str, limit: int) -> tuple[str, str]:
 # klang deshalb jedes Mal anders betont. Mit festem Startwert vor jedem Satz
 # ist das Ergebnis für denselben Text und dieselbe Stimme immer gleich;
 # verschiedene Sätze klingen trotzdem natürlich unterschiedlich.
+# Qwen verschluckt am Ende gern den letzten Laut. Bekannter Kniff aus der
+# Qwen3-TTS-Community: hinter das Satzende ein Füllzeichen hängen, das nicht
+# gesprochen wird – das Modell spricht dann das letzte Wort zu Ende.
+# QWEN_END_FIX=0 schaltet das ab.
+QWEN_END_FIX = os.environ.get("QWEN_END_FIX", "1").strip() not in ("0", "false", "no", "")
+QWEN_END_TAIL = " ^."
+
+
+def _qwen_text(chunk: str) -> str:
+    chunk = chunk.rstrip()
+    if not chunk:
+        return chunk
+    if chunk[-1] not in ".!?…":
+        chunk += "."
+    return chunk + QWEN_END_TAIL if QWEN_END_FIX else chunk
+
+
 QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
 
 # Fertige Qwen-Ausgaben merken: Ein wiederholter Text (Testsatz, "Hallo")
@@ -364,14 +381,14 @@ class QwenEngine:
                     if QWEN_REF_DECODE_S > 0 and ref_code is not None:
                         self._trim_codes = max(0, int(ref_code.shape[0]) - keep)
                     gen = lambda: self._model.generate_voice_clone(  # noqa: E731
-                        text=chunk, language="German",
+                        text=_qwen_text(chunk), language="German",
                         voice_clone_prompt=prompt,
                         max_new_tokens=_qwen_token_budget(chunk),
                         temperature=temperature,
                     )
                 else:
                     gen = lambda: self._model.generate_custom_voice(  # noqa: E731
-                        text=chunk, language="German", speaker=speaker,
+                        text=_qwen_text(chunk), language="German", speaker=speaker,
                         max_new_tokens=_qwen_token_budget(chunk),
                         temperature=temperature,
                         instruct=instruct or None,
@@ -388,6 +405,8 @@ class QwenEngine:
                 finally:
                     self._trim_codes = 0
             audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
+            # 0,15 s Stille anhängen: kein hartes Ende direkt nach dem letzten Laut
+            audio = np.concatenate([audio, np.zeros(int(0.15 * SAMPLE_RATE), dtype=np.float32)])
             dur = len(audio) / SAMPLE_RATE
             log.info("Abschnitt %d/%d: %d Zeichen -> %.1f s Audio, Ende: »…%s«",
                      i, len(chunks), len(chunk), dur, chunk[-40:])
