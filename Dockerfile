@@ -2,8 +2,12 @@ FROM python:3.12-slim
 
 # espeak-ng: Lautschrift-Umwandlung; libsndfile1: WAV-Erzeugung
 # git: kokoro/misaki werden aus Git-Repos installiert (siehe requirements.txt)
+# libatomic1, libnuma1, libdrm*, libelf: werden von den ROCm-Torch-Wheels
+# (GPU-Variante) vorausgesetzt, fehlen aber im schlanken Basis-Image; klein,
+# deshalb für alle Varianten.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends espeak-ng libsndfile1 git sox \
+       libatomic1 libnuma1 libdrm2 libdrm-amdgpu1 libelf1t64 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
