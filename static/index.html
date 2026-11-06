@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=14">
+<link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
 <main class="panel">
@@ -36,6 +36,25 @@
         <button id="rename-voice" type="button" title="Anzeigenamen dieser Stimme ändern">✎</button>
         <button id="apply-voice" type="button" title="Diese Stimme sofort verwenden">Wechseln</button>
       </span>
+    </label>
+    <label>Klang <output id="warmth-val">0</output>
+      <input id="warmth" type="range" min="-1" max="1" step="0.05" value="0">
+      <span class="slider-ends"><span>hell, frisch</span><span>neutral</span><span>warm, tief</span></span>
+    </label>
+    <label class="hidden" id="style-row">Sprechstil <span class="muted">(nur Qwen-Preset-Stimmen)</span>
+      <select id="qwen_style">
+        <option value="neutral">neutral</option>
+        <option value="froehlich">fröhlich</option>
+        <option value="aufgeregt">aufgeregt, energiegeladen</option>
+        <option value="ernst">ernst, sachlich</option>
+        <option value="gelangweilt">gelangweilt, monoton</option>
+        <option value="ruhig">ruhig, warm, sanft</option>
+        <option value="verfuehrerisch">verführerisch</option>
+        <option value="fluesternd">flüsternd</option>
+        <option value="streng">streng, kühl</option>
+        <option value="eigen">eigene Anweisung …</option>
+      </select>
+      <input id="qwen_style_custom" class="hidden" type="text" maxlength="300" placeholder="z. B. Speak like an excited sports commentator (Englisch wirkt am besten)">
     </label>
     <label class="hidden" id="temperature-row">Betonung <output id="temperature-val">0.90</output>
       <input id="qwen_temperature" type="range" min="0.3" max="1.2" step="0.05" value="0.9">
@@ -149,6 +168,6 @@
     </label>
   </details>
 </main>
-<script src="/static/app.js?v=14"></script>
+<script src="/static/app.js?v=15"></script>
 </body>
 </html>

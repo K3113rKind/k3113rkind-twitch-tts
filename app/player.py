@@ -22,7 +22,8 @@ from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
-from .voices import VOICES, available_voices, is_available, is_qwen
+from . import klang
+from .voices import QWEN_STYLES, VOICES, available_voices, is_available, is_qwen
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
@@ -245,6 +246,9 @@ class ChatSpeaker:
         chunks = chunks or [text]
         speed = cfg["speed"]
         temperature = cfg["qwen_temperature"]
+        style = cfg["qwen_style"]
+        instruct = cfg["qwen_style_custom"] if style == "eigen" else QWEN_STYLES.get(style)
+        warmth = cfg["warmth"]
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
@@ -255,7 +259,7 @@ class ChatSpeaker:
 
         def synth(chunk: str):
             return asyncio.ensure_future(
-                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed, temperature)
+                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed, temperature, instruct)
             )
 
         totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0}
@@ -298,6 +302,8 @@ class ChatSpeaker:
                 )
 
             samples = result.samples
+            if warmth:
+                samples = await asyncio.to_thread(klang.apply, samples, result.sample_rate, warmth)
             if idx > 0:  # kurze Atempause zwischen den Abschnitten
                 import numpy as np
 

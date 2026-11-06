@@ -344,7 +344,7 @@ class QwenEngine:
 
     def synthesize(self, text: str, repo_id: str, speaker: str | None = None,
                    ref_wav: str | None = None, ref_txt: str | None = None,
-                   temperature: float | None = None):
+                   temperature: float | None = None, instruct: str | None = None):
         import numpy as np
         import torch
 
@@ -374,6 +374,7 @@ class QwenEngine:
                         text=chunk, language="German", speaker=speaker,
                         max_new_tokens=_qwen_token_budget(chunk),
                         temperature=temperature,
+                        instruct=instruct or None,
                     )
                 try:
                     try:
@@ -521,7 +522,8 @@ class TTS:
         self._ready = True
 
     def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
-                   temperature: float | None = None) -> SynthesisResult:
+                   temperature: float | None = None,
+                   instruct: str | None = None) -> SynthesisResult:
         if voice_key.startswith("klon-"):
             voices_mod.sync_clone_voices()
         if voice_key not in voices_mod.VOICES:
@@ -536,7 +538,7 @@ class TTS:
             ref_stamp = tuple(
                 os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
             )
-            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, text)
+            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
             if key in self._qwen_cache:
                 self._qwen_cache.move_to_end(key)
                 samples = self._qwen_cache[key]
@@ -550,6 +552,7 @@ class TTS:
             samples = self._qwen.synthesize(
                 text, spec["model"], spec.get("speaker"),
                 spec.get("ref_wav"), spec.get("ref_txt"), temperature,
+                instruct if spec.get("engine") == "qwen" else None,
             )
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")

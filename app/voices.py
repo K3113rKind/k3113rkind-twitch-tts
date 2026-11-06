@@ -109,6 +109,21 @@ def sync_clone_voices() -> None:
     VOICES.update(wanted)
 
 
+# Sprechstile für die Preset-Stimmen (CustomVoice-Modelle verstehen eine
+# Regieanweisung). Eigene Stimmen (Base-Modelle) können das nicht – dort
+# kommt der Stil allein aus der Vorlage.
+QWEN_STYLES = {
+    "neutral": None,
+    "froehlich": "Speak in a cheerful, upbeat and friendly tone.",
+    "aufgeregt": "Speak with high energy and excitement, lively and a bit faster.",
+    "ernst": "Speak in a serious, calm and matter-of-fact tone.",
+    "gelangweilt": "Speak in a bored, flat, monotone and unenthusiastic tone.",
+    "ruhig": "Speak slowly and calmly with a warm, soft and gentle voice.",
+    "verfuehrerisch": "Speak in a low, slow, sultry and seductive voice, slightly breathy and intimate.",
+    "fluesternd": "Whisper softly and intimately, very quiet and close.",
+    "streng": "Speak in a strict, cold and commanding tone.",
+}
+
 DEFAULT_VOICE = "victoria"
 
 
@@ -181,7 +196,7 @@ def available_voices(custom: dict | None = None) -> list[dict]:
     sync_clone_voices()
     return [
         {"key": key, "label": display_name(key, custom), "default_label": data["label"],
-         "qwen": is_qwen(key)}
+         "qwen": is_qwen(key), "styleable": data.get("engine") == "qwen"}
         for key, data in list(VOICES.items())
         if is_available(key)
     ]

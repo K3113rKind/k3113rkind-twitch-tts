@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .voices import DEFAULT_VOICE, VOICES, sync_clone_voices
+from .voices import DEFAULT_VOICE, QWEN_STYLES, VOICES, sync_clone_voices
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,12 @@ DEFAULTS: dict[str, Any] = {
     # Qwen: wie stark die Betonung variiert (Sampling-Temperatur). Niedriger =
     # gleichmäßiger und näher an der Referenz, höher = lebendiger, aber wilder.
     "qwen_temperature": 0.9,
+    # Sprechstil der Qwen-Preset-Stimmen (Schlüssel aus voices.QWEN_STYLES
+    # oder "eigen" mit freiem Text in qwen_style_custom)
+    "qwen_style": "neutral",
+    "qwen_style_custom": "",
+    # Klang-Nachbearbeitung für alle Stimmen: -1 hell/frisch … +1 warm/tief
+    "warmth": 0.0,
     # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
     # über "Umbenennen" gesetzt; leerer Name = Standardname.
     "voice_labels": {},
@@ -107,6 +113,14 @@ class ConfigStore:
                 value = max(0, int(value))
                 if key == "queue_limit":
                     value = max(1, value)
+            elif key == "qwen_style":
+                value = str(value).strip()
+                if value not in QWEN_STYLES and value != "eigen":
+                    continue
+            elif key == "qwen_style_custom":
+                value = str(value).strip()[:300]
+            elif key == "warmth":
+                value = round(min(max(float(value), -1.0), 1.0), 2)
             elif key == "qwen_temperature":
                 value = round(min(max(float(value), 0.3), 1.2), 2)
             elif key == "keepalive_level":

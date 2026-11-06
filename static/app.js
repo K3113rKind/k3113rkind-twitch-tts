@@ -20,6 +20,8 @@ const el = {
   cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
   cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
+  warmth: $("warmth"), warmthVal: $("warmth-val"),
+  style: $("qwen_style"), styleCustom: $("qwen_style_custom"), styleRow: $("style-row"),
   temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
 };
@@ -240,6 +242,7 @@ function fillVoices(voices) {
     opt.textContent = v.label;
     opt.dataset.defaultLabel = v.default_label || v.label;
     opt.dataset.qwen = v.qwen ? "1" : "";
+    opt.dataset.styleable = v.styleable ? "1" : "";
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
@@ -250,6 +253,8 @@ function fillVoices(voices) {
 function updateTemperatureRow() {
   const opt = el.voice.selectedOptions[0];
   el.temperatureRow.classList.toggle("hidden", !(opt && opt.dataset.qwen));
+  el.styleRow.classList.toggle("hidden", !(opt && opt.dataset.styleable));
+  el.styleCustom.classList.toggle("hidden", el.style.value !== "eigen");
 }
 
 // Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
@@ -291,6 +296,9 @@ function collectConfig() {
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
     qwen_temperature: parseFloat(el.temperature.value),
+    qwen_style: el.style.value,
+    qwen_style_custom: el.styleCustom.value,
+    warmth: parseFloat(el.warmth.value),
   };
 }
 
@@ -322,6 +330,10 @@ function applyConfig(c) {
   el.blocklist.value = c.bot_blocklist.join("\n");
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
+  el.style.value = c.qwen_style || "neutral";
+  el.styleCustom.value = c.qwen_style_custom || "";
+  el.warmth.value = c.warmth ?? 0;
+  updateTemperatureRow();
   updateSliderLabels();
   updateKeepaliveLabel();
 }
@@ -337,6 +349,8 @@ function updateSliderLabels() {
   el.volumeVal.textContent = Math.round(parseFloat(el.volume.value) * 100) + " %";
   el.speedVal.textContent = parseFloat(el.speed.value).toFixed(2) + "\u00d7";
   el.temperatureVal.textContent = parseFloat(el.temperature.value).toFixed(2);
+  const w = parseFloat(el.warmth.value);
+  el.warmthVal.textContent = Math.abs(w) < 0.02 ? "neutral" : (w > 0 ? `warm ${Math.round(w * 100)} %` : `hell ${Math.round(-w * 100)} %`);
 }
 
 /* ---------------------------------------------------------------- Events */
@@ -345,8 +359,12 @@ for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.rea
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; updateTemperatureRow(); });
+el.style.addEventListener("change", () => { updateTemperatureRow(); saveConfig(); });
+el.styleCustom.addEventListener("change", saveConfig);
+// Doppelklick setzt den Klang-Regler auf neutral zurück
+el.warmth.addEventListener("dblclick", () => { el.warmth.value = 0; updateSliderLabels(); saveConfig(); });
 el.channel.addEventListener("change", setMediaSession);
-for (const slider of [el.volume, el.speed, el.temperature]) {
+for (const slider of [el.volume, el.speed, el.temperature, el.warmth]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
 }
 
