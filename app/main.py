@@ -190,11 +190,6 @@ async def apply_voice():
     return _status()
 
 
-# Obergrenze für Testtexte: lang genug für Absätze, kurz genug, dass ein
-# versehentlich eingefügtes Dokument nicht minutenlang die Queue blockiert.
-MAX_SAY_CHARS = 2000
-
-
 @app.post("/api/say")
 async def say(body: dict):
     """Testtext vorlesen, ohne dass ein Twitch-Chat laufen muss. Nutzt die
@@ -202,8 +197,6 @@ async def say(body: dict):
     text = str(body.get("text", "")).strip()
     if not text:
         raise HTTPException(400, "Bitte einen Text eingeben.")
-    if len(text) > MAX_SAY_CHARS:
-        raise HTTPException(400, f"Text zu lang (max. {MAX_SAY_CHARS} Zeichen).")
 
     voice = config.get("voice")
     if not is_available(voice):

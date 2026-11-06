@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 
@@ -69,6 +70,43 @@ def _qwen_token_budget(text: str) -> int:
     return min(2048, int(seconds * QWEN_STEPS_PER_SECOND))
 
 
+# Längere Texte rechnet Qwen abschnittsweise: Pro Durchgang schafft es
+# höchstens 2048 Schritte (~2,7 min Audio), und kürzere Abschnitte halten
+# das Modell stabil. 300 Zeichen sind gut 20 s Sprache – weit unter dem
+# Limit. Kokoro teilt selbst auf und braucht das nicht.
+QWEN_CHUNK_CHARS = 300
+QWEN_CHUNK_PAUSE_S = 0.25
+
+
+def _split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
+    """Text an Satzenden (notfalls Kommas/Leerzeichen) in Abschnitte teilen."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text] if text else []
+    sentences = [s for s in re.split(r"(?<=[.!?…;:])\s+|\n+", text) if s.strip()]
+    pieces: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        # Überlange Einzelsätze an Kommas, sonst an Leerzeichen zerlegen
+        while len(sentence) > max_chars:
+            cut = sentence.rfind(", ", 0, max_chars)
+            if cut < max_chars // 3:
+                cut = sentence.rfind(" ", 0, max_chars)
+            if cut <= 0:
+                cut = max_chars
+            pieces.append(sentence[:cut + 1].strip())
+            sentence = sentence[cut + 1:].strip()
+        if sentence:
+            pieces.append(sentence)
+    chunks: list[str] = []
+    for piece in pieces:
+        if chunks and len(chunks[-1]) + 1 + len(piece) <= max_chars:
+            chunks[-1] += " " + piece
+        else:
+            chunks.append(piece)
+    return chunks
+
+
 class QwenEngine:
     """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
     Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
@@ -113,26 +151,37 @@ class QwenEngine:
             self._repo = repo_id
 
     def synthesize(self, text: str, repo_id: str, speaker: str):
+        import numpy as np
+
         self.load(repo_id)
-        with self._lock:
-            t0 = time.perf_counter()
-            wavs, sr = self._model.generate_custom_voice(
-                text=text, language="German", speaker=speaker,
-                max_new_tokens=_qwen_token_budget(text),
-            )
-            took = time.perf_counter() - t0
-        dur = len(wavs[0]) / int(sr) if sr else 0.0
-        budget_s = _qwen_token_budget(text) / QWEN_STEPS_PER_SECOND
-        if dur >= budget_s - 0.5:
-            log.warning(
-                "Qwen hat das Satzende nicht gefunden und wurde nach %.0f s Audio "
-                "abgeschnitten.", dur,
-            )
+        chunks = _split_for_qwen(text)
+        parts = []
+        t0 = time.perf_counter()
+        for i, chunk in enumerate(chunks, 1):
+            with self._lock:
+                wavs, sr = self._model.generate_custom_voice(
+                    text=chunk, language="German", speaker=speaker,
+                    max_new_tokens=_qwen_token_budget(chunk),
+                )
+            audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
+            dur = len(audio) / SAMPLE_RATE
+            if dur >= _qwen_token_budget(chunk) / QWEN_STEPS_PER_SECOND - 0.5:
+                log.warning(
+                    "Qwen hat das Satzende nicht gefunden, Abschnitt %d/%d nach %.0f s "
+                    "Audio abgeschnitten.", i, len(chunks), dur,
+                )
+            if parts:
+                parts.append(np.zeros(int(QWEN_CHUNK_PAUSE_S * SAMPLE_RATE), dtype=np.float32))
+            parts.append(audio)
+        took = time.perf_counter() - t0
+        samples = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+        dur = len(samples) / SAMPLE_RATE
         log.info(
-            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
+            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Abschnitt%s)",
             repo_id.split("-12Hz-")[-1], speaker, took, dur, took / dur if dur else 0.0,
+            len(chunks), "" if len(chunks) == 1 else "e",
         )
-        return _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
+        return samples
 
 
 class TTS:
