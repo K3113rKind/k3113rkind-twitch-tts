@@ -149,6 +149,19 @@ def _qwen_device():
     return "cpu", torch.float32, "CPU"
 
 
+# Experiment (nur GPU): torch.compile fasst die vielen kleinen Rechenschritte
+# von Qwen zu größeren zusammen. QWEN_COMPILE: 0/aus (Standard), 1 = normal,
+# overhead = "reduce-overhead" (GPU-Graphen), max = "max-autotune-no-cudagraphs".
+# Erster Satz nach dem Start kompiliert (Minuten); scheitert es, schaltet die
+# App für diesen Lauf automatisch zurück auf ohne.
+_COMPILE_MODES = {"1": "default", "on": "default", "overhead": "reduce-overhead",
+                  "max": "max-autotune-no-cudagraphs"}
+
+
+def _compile_mode() -> str | None:
+    return _COMPILE_MODES.get(os.environ.get("QWEN_COMPILE", "0").strip().lower())
+
+
 class QwenEngine:
     """Qwen3-TTS auf CPU – Preset-Stimmen (CustomVoice-Modelle) und eigene
     Stimmen (Base-Modelle mit Referenzaufnahme). Hält nur ein Modell im RAM –
@@ -172,6 +185,15 @@ class QwenEngine:
         self.last_decode_s = 0.0
         self._trim_codes = 0  # beim Klonen: so viele Referenz-Schritte nicht decodieren
         self.device_name = None  # "CPU" oder Name der Grafikkarte, sobald geladen
+        self._compiled: list = []  # (Modul, ursprüngliches forward) bei torch.compile
+
+    def _uncompile(self, exc: Exception) -> None:
+        log.warning("torch.compile fehlgeschlagen (%s) – rechne ab jetzt ohne", exc)
+        for mod, original in self._compiled:
+            mod.forward = original
+        self._compiled = []
+        if self.device_name:
+            self.device_name = self.device_name.split(" · compile")[0] + " · compile fehlgeschlagen"
 
     @staticmethod
     def _decode_trimmed(original_decode, encoded, trim, *args, **kwargs):
@@ -216,6 +238,18 @@ class QwenEngine:
             )
             model = Qwen3TTSModel.from_pretrained(str(snapshot), device_map=device, dtype=dtype)
             self.device_name = device_name
+            self._compiled = []
+            mode = _compile_mode()
+            if mode and device != "cpu":
+                # Nur die reinen Transformer-Blöcke kompilieren – die
+                # Generierungsschleifen drumherum bleiben normales Python.
+                talker = model.model.talker
+                for mod in (talker.model, talker.code_predictor.model):
+                    original = mod.forward
+                    mod.forward = torch.compile(original, mode=mode, dynamic=True)
+                    self._compiled.append((mod, original))
+                self.device_name = f"{device_name} · compile {mode}"
+                log.info("torch.compile aktiv (%s) – erster Satz dauert länger", mode)
             # Zeit des Klang-Decoders mitmessen (Diagnose: Anteil an der Rechenzeit)
             tokenizer = model.model.speech_tokenizer
             original_decode = tokenizer.decode
@@ -268,19 +302,27 @@ class QwenEngine:
                     keep = int(QWEN_REF_DECODE_S * QWEN_STEPS_PER_SECOND)
                     if QWEN_REF_DECODE_S > 0 and ref_code is not None:
                         self._trim_codes = max(0, int(ref_code.shape[0]) - keep)
-                    try:
-                        wavs, sr = self._model.generate_voice_clone(
-                            text=chunk, language="German",
-                            voice_clone_prompt=prompt,
-                            max_new_tokens=_qwen_token_budget(chunk),
-                        )
-                    finally:
-                        self._trim_codes = 0
+                    gen = lambda: self._model.generate_voice_clone(  # noqa: E731
+                        text=chunk, language="German",
+                        voice_clone_prompt=prompt,
+                        max_new_tokens=_qwen_token_budget(chunk),
+                    )
                 else:
-                    wavs, sr = self._model.generate_custom_voice(
+                    gen = lambda: self._model.generate_custom_voice(  # noqa: E731
                         text=chunk, language="German", speaker=speaker,
                         max_new_tokens=_qwen_token_budget(chunk),
                     )
+                try:
+                    try:
+                        wavs, sr = gen()
+                    except Exception as exc:
+                        if not self._compiled:
+                            raise
+                        self._uncompile(exc)
+                        torch.manual_seed(QWEN_SEED)
+                        wavs, sr = gen()
+                finally:
+                    self._trim_codes = 0
             audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
             dur = len(audio) / SAMPLE_RATE
             if dur >= _qwen_token_budget(chunk) / QWEN_STEPS_PER_SECOND - 0.5:

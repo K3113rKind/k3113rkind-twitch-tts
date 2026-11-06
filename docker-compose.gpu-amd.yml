@@ -34,5 +34,11 @@ services:
       - MIOPEN_FIND_MODE=FAST
       - MIOPEN_USER_DB_PATH=/miopen-cache
       - MIOPEN_CUSTOM_CACHE_DIR=/miopen-cache
+      # Experiment torch.compile: QWEN_COMPILE=1 (oder overhead/max) in .env,
+      # 0 = aus. Kompiliertes bleibt im Cache, spätere Starts gehen schneller.
+      - QWEN_COMPILE=${QWEN_COMPILE:-0}
+      - TORCHINDUCTOR_CACHE_DIR=/compile-cache/inductor
+      - TRITON_CACHE_DIR=/compile-cache/triton
     volumes:
       - ./models/miopen-cache:/miopen-cache
+      - ./models/compile-cache:/compile-cache

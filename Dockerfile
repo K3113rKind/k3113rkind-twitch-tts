@@ -24,6 +24,13 @@ RUN pip install --no-cache-dir torch torchaudio --index-url "$TORCH_INDEX" \
     && python -c "import torch; print('Torch', torch.__version__, 'HIP', torch.version.hip, 'CUDA', torch.version.cuda)" \
     && case "$TORCH_INDEX" in *cpu) python -c "import torch; assert not torch.version.cuda, 'CUDA-Torch im CPU-Image'";; esac
 
+# GPU-Varianten: C-Compiler für torch.compile (Triton baut damit kleine
+# Startroutinen). Eigene Schicht nach Torch, damit sie dessen Cache nicht
+# ungültig macht; im CPU-Image entfällt sie.
+RUN case "$TORCH_INDEX" in *cpu) ;; *) apt-get update \
+      && apt-get install -y --no-install-recommends gcc libc6-dev \
+      && rm -rf /var/lib/apt/lists/* ;; esac
+
 COPY app ./app
 COPY static ./static
 
