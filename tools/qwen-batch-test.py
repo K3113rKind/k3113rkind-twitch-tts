@@ -11,6 +11,7 @@ Ergebnisse der größten Batch-Größe zum Anhören in den config-Ordner
 """
 
 import logging
+import os
 import sys
 import time
 
@@ -75,6 +76,14 @@ def run(texts):
 
 print("Aufwärmen …", flush=True)
 run(TEXTS[:1])
+
+# Paralleltest: alle Prozesse laden erst, dann starten sie gleichzeitig,
+# sobald die Datei BENCH_GO existiert (z. B. /config/bench-go).
+go = os.environ.get("BENCH_GO")
+if go:
+    print("Bereit, warte auf Startsignal …", flush=True)
+    while not os.path.exists(go):
+        time.sleep(0.2)
 
 print()
 print(f"{'Anzahl':>6} | {'Rechenzeit':>10} | {'Audio gesamt':>12} | {'RTF gesamt':>10} | {'je Nachricht':>12}")
