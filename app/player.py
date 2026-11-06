@@ -26,6 +26,8 @@ from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_av
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
+# Gruppenberechnung: längere Texte (Zeichen) laufen allein, nicht in einer Gruppe
+BATCH_LONG_CHARS = 110
 
 log = logging.getLogger(__name__)
 
@@ -283,9 +285,26 @@ class ChatSpeaker:
             return
         if not is_qwen(voice):
             return
-        picked = list(self._queue)[:size]
-        texts = [self._chunks(self._spoken_text(m, cfg, voice), voice)[0] for m in picked]
-        for m in picked:
+        # Eine Gruppe dauert so lange wie ihre längste Nachricht (alle laufen
+        # im Gleichschritt, bis die letzte fertig ist). Deshalb nur ähnlich
+        # lange Nachrichten zusammenfassen; lange laufen allein.
+        candidates = []
+        for m in self._queue:
+            if not m.batched:
+                candidates.append((m, self._chunks(self._spoken_text(m, cfg, voice), voice)[0]))
+        if not candidates:
+            return
+        head_len = len(candidates[0][1])
+        picked = [candidates[0]]
+        if head_len <= BATCH_LONG_CHARS:
+            for m, text in candidates[1:]:
+                if len(picked) >= size:
+                    break
+                if (len(text) <= BATCH_LONG_CHARS
+                        and abs(len(text) - head_len) <= max(25, 0.5 * max(len(text), head_len))):
+                    picked.append((m, text))
+        texts = [text for _, text in picked]
+        for m, _ in picked:
             m.batched = True
         _, temperature, instruct = self._gen_params(cfg)
         self._batch_task = asyncio.ensure_future(asyncio.to_thread(
