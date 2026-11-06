@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .config import ConfigStore
 from . import thirdparty_emotes
@@ -35,6 +35,7 @@ class QueuedMessage:
     username: str
     text: str
     raw: bool = False  # Testtext aus der GUI: ohne Namensansage vorlesen
+    arrived: float = field(default_factory=time.monotonic)  # für die Wartezeit-Anzeige
 
 
 class Broadcaster:
@@ -83,6 +84,7 @@ class ChatSpeaker:
         self.last_perf: dict | None = None
         self.dropped_total = 0
         self._emote_fetches: set[str] = set()
+        self._batch_task: asyncio.Task | None = None
 
     def _ensure_emote_fetch(self, room_id: str) -> None:
         """Emote-Listen einmal pro Kanal im Hintergrund laden."""
@@ -145,6 +147,7 @@ class ChatSpeaker:
             self._queue.popleft()
             self.dropped_total += 1
         self._queue_event.set()
+        self._maybe_prefetch()
         await self._push_queue_state()
 
     async def say_text(self, text: str) -> None:
@@ -154,6 +157,7 @@ class ChatSpeaker:
         self.start()
         self._queue.append(QueuedMessage(username="Test", text=text, raw=True))
         self._queue_event.set()
+        self._maybe_prefetch()
         await self._push_queue_state()
 
     # ---------------------------------------------------------------- worker
@@ -192,6 +196,7 @@ class ChatSpeaker:
             while not self._queue:
                 self._queue_event.clear()
                 await self._queue_event.wait()
+            self._maybe_prefetch()
             msg = self._queue.popleft()
             await self._push_queue_state()
             try:
@@ -208,6 +213,67 @@ class ChatSpeaker:
             self._skip.set()
         await self._push_queue_state()
 
+    # ------------------------------------------------- Gruppenberechnung
+    def _voice(self, cfg) -> str:
+        voice = cfg["voice"]
+        if not is_available(voice):
+            usable = available_voices()
+            if not usable:
+                raise RuntimeError(
+                    "Keine Stimmen installiert – bitte install.sh erneut ausführen."
+                )
+            voice = usable[0]["key"]
+        return voice
+
+    @staticmethod
+    def _spoken_text(msg: QueuedMessage, cfg, voice: str) -> str:
+        if cfg["read_username"] and not msg.raw:
+            if cfg["username_style"] == "sagt":
+                # Verb passend zur Sprache der gewählten Stimme
+                verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
+                return f"{msg.username} {verb} {msg.text}"
+            return f"{msg.username}: {msg.text}"
+        return msg.text
+
+    @staticmethod
+    def _gen_params(cfg) -> tuple:
+        style = cfg["qwen_style"]
+        instruct = cfg["qwen_style_custom"] if style == "eigen" else QWEN_STYLES.get(style)
+        # Qwen-Tempo nicht nachträglich strecken (klingt verfremdet), sondern
+        # bei den Preset-Stimmen per Anweisung; eigene Stimmen sprechen im
+        # Tempo ihrer Referenzaufnahme.
+        return cfg["speed"], cfg["qwen_temperature"], speed_instruct(instruct, cfg["speed"])
+
+    @staticmethod
+    def _chunks(text: str, voice: str) -> list[str]:
+        chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
+                  if is_chunked(voice) else [text])
+        return chunks or [text]
+
+    def _maybe_prefetch(self) -> None:
+        """Qwen auf der CPU: wartende Nachrichten (höchstens qwen_batch) in
+        einer Gruppe vorab berechnen. Läuft, während die aktuelle Nachricht
+        noch spielt – so hält der CT auch mit einem vollen Chat Schritt."""
+        if self._batch_task and not self._batch_task.done():
+            return
+        cfg = self.config.as_dict()
+        size = cfg["qwen_batch"]
+        if size <= 1 or not self._queue:
+            return
+        try:
+            voice = self._voice(cfg)
+        except RuntimeError:
+            return
+        if not is_qwen(voice):
+            return
+        texts = [self._chunks(self._spoken_text(m, cfg, voice), voice)[0]
+                 for m in list(self._queue)[:size]]
+        _, temperature, instruct = self._gen_params(cfg)
+        self._batch_task = asyncio.ensure_future(asyncio.to_thread(
+            self.tts.prefetch_batch, texts, voice, temperature, instruct))
+        # Ist die Gruppe fertig, gleich die nächsten Wartenden anstoßen
+        self._batch_task.add_done_callback(lambda _t: self._maybe_prefetch())
+
     async def _speak(self, msg: QueuedMessage) -> None:
         self._current_raw = msg.raw
         try:
@@ -217,40 +283,14 @@ class ChatSpeaker:
 
     async def _speak_inner(self, msg: QueuedMessage) -> None:
         cfg = self.config.as_dict()
-        voice = cfg["voice"]
-        if not is_available(voice):
-            usable = available_voices()
-            if not usable:
-                raise RuntimeError(
-                    "Keine Stimmen installiert – bitte install.sh erneut ausführen."
-                )
-            voice = usable[0]["key"]
-
-        if cfg["read_username"] and not msg.raw:
-            if cfg["username_style"] == "sagt":
-                # Verb passend zur Sprache der gewählten Stimme
-                verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
-                text = f"{msg.username} {verb} {msg.text}"
-            else:
-                text = f"{msg.username}: {msg.text}"
-        else:
-            text = msg.text
-
+        voice = self._voice(cfg)
+        text = self._spoken_text(msg, cfg, voice)
         # Qwen-Texte abschnittsweise: Der erste Abschnitt wird schon gespielt,
         # während die nächsten im Hintergrund rechnen – lange Texte starten so
         # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist
         # schnell genug und bekommt den Text am Stück.
-        chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
-                  if is_chunked(voice) else [text])
-        chunks = chunks or [text]
-        speed = cfg["speed"]
-        temperature = cfg["qwen_temperature"]
-        style = cfg["qwen_style"]
-        instruct = cfg["qwen_style_custom"] if style == "eigen" else QWEN_STYLES.get(style)
-        # Qwen-Tempo nicht nachträglich strecken (klingt verfremdet), sondern
-        # bei den Preset-Stimmen per Anweisung; eigene Stimmen sprechen im
-        # Tempo ihrer Referenzaufnahme.
-        instruct = speed_instruct(instruct, speed)
+        chunks = self._chunks(text, voice)
+        speed, temperature, instruct = self._gen_params(cfg)
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
@@ -264,7 +304,8 @@ class ChatSpeaker:
                 asyncio.to_thread(self.tts.synthesize, chunk, voice, speed, temperature, instruct)
             )
 
-        totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0}
+        totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0,
+                  "batch": 1, "wait": None}
         all_cached = True
         t_start = time.perf_counter()
         first_audio_s = None
@@ -285,11 +326,14 @@ class ChatSpeaker:
             totals["load"] += result.load_seconds
             totals["audio"] += result.duration_seconds
             totals["decode"] += result.decode_seconds
+            totals["batch"] = max(totals["batch"], getattr(result, "batch", 1))
             all_cached &= result.cached
             self.last_perf = self._perf(cfg, voice, totals, all_cached, first_audio_s)
 
             if idx == 0:
                 first_audio_s = time.perf_counter() - t_start
+                totals["wait"] = time.monotonic() - msg.arrived
+                self.last_perf = self._perf(cfg, voice, totals, all_cached, first_audio_s)
                 self._current_id += 1
                 utterance_id = self._current_id
                 # Nur Anzeige für die UI/das Overlay – der Ton läuft über /stream.
@@ -348,4 +392,6 @@ class ChatSpeaker:
             "decode_s": round(totals["decode"], 2),
             "first_s": round(first_audio_s, 2) if first_audio_s is not None else None,
             "rtf": round(totals["compute"] / audio, 2) if audio else None,
+            "batch": totals.get("batch", 1),
+            "wait_s": round(totals["wait"], 1) if totals.get("wait") is not None else None,
         }

@@ -35,11 +35,11 @@ class SynthesisResult:
     Audio-Stream (stream.py)."""
 
     __slots__ = ("samples", "duration_seconds", "sample_rate", "compute_seconds",
-                 "load_seconds", "cached", "decode_seconds")
+                 "load_seconds", "cached", "decode_seconds", "batch")
 
     def __init__(self, samples, duration_seconds: float, sample_rate: int,
                  compute_seconds: float = 0.0, load_seconds: float = 0.0,
-                 cached: bool = False, decode_seconds: float = 0.0):
+                 cached: bool = False, decode_seconds: float = 0.0, batch: int = 1):
         self.samples = samples
         self.duration_seconds = duration_seconds
         self.sample_rate = sample_rate
@@ -47,6 +47,7 @@ class SynthesisResult:
         self.load_seconds = load_seconds        # Modell laden (nur beim ersten Mal)
         self.cached = cached                    # aus dem Zwischenspeicher, nicht neu berechnet
         self.decode_seconds = decode_seconds    # davon Klangerzeugung (Qwen-Decoder)
+        self.batch = batch                      # mit so vielen Nachrichten gemeinsam berechnet
 
 
 def _resample(samples, sr_in: int, sr_out: int):
@@ -488,6 +489,72 @@ class QwenEngine:
         return samples
 
 
+    def synthesize_batch(self, texts: list[str], repo_id: str, speaker: str | None = None,
+                         ref_wav: str | None = None, ref_txt: str | None = None,
+                         temperature: float | None = None, instruct: str | None = None):
+        """Mehrere kurze Texte in EINEM Durchlauf erzeugen. Auf der CPU kostet
+        ein Schritt für 8 Texte kaum mehr als für einen (Verwaltungsaufwand
+        statt Rechenleistung bremst) – der Durchsatz steigt entsprechend.
+        Liefert [(samples, Stimm-Ähnlichkeit oder None)], Rechenzeit."""
+        import numpy as np
+        import torch
+
+        self.load(repo_id)
+        n = len(texts)
+        budget = max(_qwen_token_budget(t) for t in texts)
+        with self._lock:
+            trim = 0
+            prompt = None
+            if ref_wav:
+                prompt = self._clone_prompt(ref_wav, ref_txt)
+                ref_code = getattr(prompt[0], "ref_code", None) if prompt else None
+                if QWEN_REF_DECODE_S > 0 and ref_code is not None:
+                    trim = max(0, int(ref_code.shape[0])
+                               - int(QWEN_REF_DECODE_S * QWEN_STEPS_PER_SECOND))
+                gen = lambda: self._model.generate_voice_clone(  # noqa: E731
+                    text=[_qwen_text(t) for t in texts], language=["German"] * n,
+                    voice_clone_prompt=list(prompt) * n,
+                    max_new_tokens=budget, temperature=temperature,
+                )
+            else:
+                kwargs = {"instruct": [instruct] * n} if instruct else {}
+                gen = lambda: self._model.generate_custom_voice(  # noqa: E731
+                    text=[_qwen_text(t) for t in texts], language=["German"] * n,
+                    speaker=[speaker] * n, max_new_tokens=budget,
+                    temperature=temperature, **kwargs,
+                )
+            self._decode_s = 0.0
+            t0 = time.perf_counter()
+            self._trim_codes = trim
+            try:
+                torch.manual_seed(QWEN_SEED)
+                try:
+                    wavs, sr = gen()
+                except Exception as exc:
+                    if not self._compiled:
+                        raise
+                    self._uncompile(exc)
+                    torch.manual_seed(QWEN_SEED)
+                    wavs, sr = gen()
+            finally:
+                self._trim_codes = 0
+            took = time.perf_counter() - t0
+            out = []
+            for wav in wavs:
+                wav = np.asarray(wav, dtype=np.float32)
+                if trim:  # Auffüll-Stille der Referenz entfernen
+                    wav = np.trim_zeros(wav, "f")
+                sim = (self._speaker_similarity(prompt[0], wav, int(sr))
+                       if prompt and QWEN_SPK_MIN > 0 else None)
+                audio = _resample(wav, int(sr), SAMPLE_RATE)
+                audio = np.concatenate([audio, np.zeros(int(0.15 * SAMPLE_RATE), dtype=np.float32)])
+                out.append((audio, sim))
+        dur = sum(len(a) for a, _ in out) / SAMPLE_RATE
+        log.info("Qwen %s Gruppe: %d Nachrichten, %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
+                 repo_id.split("-12Hz-")[-1], n, took, dur, took / dur if dur else 0.0)
+        return out, took
+
+
 WARMUP_TEXTS = [
     "Hallo.",
     "Das ist ein kurzer Satz zum Aufwärmen.",
@@ -511,9 +578,84 @@ class TTS:
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
+        # Gruppenberechnung (Batching): fertige Ergebnisse warten hier auf
+        # ihre Nachricht; laufende Gruppen melden sich über ein Event.
+        self._prefetched: OrderedDict = OrderedDict()
+        self._inflight: dict[tuple, threading.Event] = {}
+        self._batch_lock = threading.Lock()
 
     def is_ready(self) -> bool:
         return self._ready
+
+    @staticmethod
+    def _qwen_key(voice_key: str, spec: dict, temperature, instruct, text: str) -> tuple:
+        # Änderungszeit der Referenz im Schlüssel: neu erzeugte Stimme oder
+        # korrigierter Text -> alter Eintrag gilt nicht mehr.
+        ref_stamp = tuple(
+            os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
+        )
+        if spec.get("engine") != "qwen":
+            instruct = None  # nur Preset-Stimmen verstehen Anweisungen
+        return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
+
+    def prefetch_batch(self, texts: list[str], voice_key: str,
+                       temperature: float | None = None, instruct: str | None = None) -> int:
+        """Mehrere Texte gemeinsam vorab berechnen (blockierend, im Thread
+        aufrufen). synthesize() holt die Ergebnisse später ab oder wartet auf
+        die laufende Gruppe. Liefert die Zahl tatsächlich berechneter Texte."""
+        if not voices_mod.is_qwen(voice_key) or voice_key not in voices_mod.VOICES:
+            return 0
+        spec = voices_mod.VOICES[voice_key]
+        with self._batch_lock:
+            todo: dict[tuple, str] = {}
+            for text in texts:
+                key = self._qwen_key(voice_key, spec, temperature, instruct, text)
+                if (key in self._qwen_cache or key in self._prefetched
+                        or key in self._inflight or key in todo):
+                    continue
+                todo[key] = text
+            for key in todo:
+                self._inflight[key] = threading.Event()
+        if not todo:
+            return 0
+        try:
+            self.load(voice_key)
+            results, took = self._qwen.synthesize_batch(
+                list(todo.values()), spec["model"], spec.get("speaker"),
+                spec.get("ref_wav"), spec.get("ref_txt"), temperature,
+                instruct if spec.get("engine") == "qwen" else None,
+            )
+            total = sum(len(a) for a, _ in results) or 1
+            with self._batch_lock:
+                for key, (audio, sim) in zip(todo, results):
+                    # Klingt ein Ergebnis nicht nach der Vorlage, wird es nicht
+                    # übernommen – die Nachricht rechnet dann einzeln (mit
+                    # erneutem Versuch, siehe Stimm-Prüfung).
+                    if sim is not None and sim < QWEN_SPK_MIN:
+                        log.warning("Gruppe: Stimm-Ähnlichkeit %.2f zu niedrig – Nachricht "
+                                    "wird einzeln neu erzeugt", sim)
+                        continue
+                    if len(audio) == 0:
+                        continue
+                    self._prefetched[key] = SynthesisResult(
+                        samples=audio, duration_seconds=len(audio) / SAMPLE_RATE,
+                        sample_rate=SAMPLE_RATE,
+                        compute_seconds=took * len(audio) / total,
+                        decode_seconds=self._qwen.last_decode_s * len(audio) / total,
+                        batch=len(todo),
+                    )
+                while len(self._prefetched) > QWEN_CACHE_SIZE:
+                    self._prefetched.popitem(last=False)
+            return len(todo)
+        except Exception as exc:  # Gruppe gescheitert -> Nachrichten rechnen einzeln
+            log.warning("Gruppenberechnung fehlgeschlagen: %s", exc)
+            return 0
+        finally:
+            with self._batch_lock:
+                for key in todo:
+                    event = self._inflight.pop(key, None)
+                    if event:
+                        event.set()
 
     def forget_clone(self, name: str) -> None:
         """Nach dem Löschen einer eigenen Stimme: vorberechnete Referenz und
@@ -647,10 +789,20 @@ class TTS:
             # Cache-Schlüssel enthält bei eigenen Stimmen die Änderungszeit der
             # Referenz – wird sie neu erzeugt oder der Text korrigiert, gilt der
             # alte Eintrag nicht mehr.
-            ref_stamp = tuple(
-                os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
-            )
-            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
+            key = self._qwen_key(voice_key, spec, temperature, instruct, text)
+            # Läuft für diesen Text gerade eine Gruppenberechnung? Dann darauf
+            # warten statt doppelt zu rechnen – und das Ergebnis abholen.
+            with self._batch_lock:
+                event = self._inflight.get(key)
+            if event is not None:
+                event.wait()
+            with self._batch_lock:
+                ready = self._prefetched.pop(key, None)
+            if ready is not None:
+                self._qwen_cache[key] = ready.samples
+                while len(self._qwen_cache) > QWEN_CACHE_SIZE:
+                    self._qwen_cache.popitem(last=False)
+                return ready
             if key in self._qwen_cache:
                 self._qwen_cache.move_to_end(key)
                 samples = self._qwen_cache[key]

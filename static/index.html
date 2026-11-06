@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=21">
+<link rel="stylesheet" href="/static/style.css?v=22">
 </head>
 <body>
 <main class="panel">
@@ -135,6 +135,9 @@
       <label>Max. wartende Nachrichten
         <input id="queue_limit" type="number" min="1" step="1" value="10">
       </label>
+      <label>Qwen: gleichzeitig berechnen <span class="muted">(1 = einzeln)</span>
+        <input id="qwen_batch" type="number" min="1" max="16" step="1" value="8">
+      </label>
     </div>
 
     <label>Bots, die ignoriert werden <span class="muted">(einer pro Zeile)</span>
@@ -176,6 +179,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=21"></script>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>
