@@ -79,6 +79,9 @@ class ConfigStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     json.dump(self._data, fh, indent=2, ensure_ascii=False)
+                # mkstemp legt 0600 an; lesbar lassen, damit die Datei auf dem
+                # Host nicht nur für root zugänglich ist (Build, Backups, Editor).
+                os.chmod(tmp, 0o644)
                 os.replace(tmp, self.path)
             except OSError:
                 try:

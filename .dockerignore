@@ -1,0 +1,9 @@
+# Nur app/ und static/ werden ins Image kopiert (siehe Dockerfile). Alles
+# andere bleibt draußen – vor allem models/ (viele GB) und config/ (gehört dem
+# Container-Root und ist für den Build nicht lesbar).
+models/
+config/
+tools/
+.git/
+.env
+*.zip
