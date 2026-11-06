@@ -10,3 +10,10 @@ config/config.json
 # Python
 __pycache__/
 *.pyc
+
+# Lokale Einstellungen und Laufzeitdaten (Qwen, GPU)
+.env
+models/qwen-hf/
+models/qwen-ref/
+models/compile-cache/
+models/miopen-cache/
