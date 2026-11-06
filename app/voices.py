@@ -89,6 +89,24 @@ POCKET_MODELS = {
     "pocket": ("german", "Pocket"),
     "pocket24": ("german_24l", "Pocket 24L"),
 }
+# Weibliche Katalogstimmen von Kyutai. Es gibt sie nur als englische (bzw.
+# französische/spanische) Aufnahmen – sie werden daraus geklont und sprechen
+# Deutsch, ggf. mit leichtem Akzent. Braucht das Modell mit Stimmklonen (HF_TOKEN).
+POCKET_FEMALE = [
+    ("alba", "Alba", "Englisch"),
+    ("anna", "Anna", "Englisch"),
+    ("azelma", "Azelma", "Englisch"),
+    ("caro_davy", "Caro", "Englisch"),
+    ("cosette", "Cosette", "Englisch"),
+    ("eponine", "Eponine", "Englisch"),
+    ("eve", "Eve", "Englisch"),
+    ("fantine", "Fantine", "Englisch"),
+    ("jane", "Jane", "Englisch"),
+    ("mary", "Mary", "Englisch"),
+    ("vera", "Vera", "Englisch"),
+    ("estelle", "Estelle", "Französisch"),
+    ("lola", "Lola", "Spanisch"),
+]
 for _key, (_lang, _name) in POCKET_MODELS.items():
     VOICES[f"{_key}-juergen"] = {
         "label": f"{_name} · Jürgen – Deutsch, männlich (Test)",
@@ -97,6 +115,14 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
         "voice": "juergen",
         "lang": "d",
     }
+    for _vkey, _vname, _origin in POCKET_FEMALE:
+        VOICES[f"{_key}-{_vkey}"] = {
+            "label": f"{_name} · {_vname} – Deutsch, weiblich (Vorlage {_origin}, Test)",
+            "engine": POCKET_ENGINE,
+            "language": _lang,
+            "voice": f"audio:{_vkey}",
+            "lang": "d",
+        }
 
 # Schlüssel-Präfixe einer eigenen Stimme NAME: klon-<präfix>-NAME
 CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS]

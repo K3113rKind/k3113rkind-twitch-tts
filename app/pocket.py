@@ -52,15 +52,16 @@ def _import_pocket():
     return TTSModel
 
 
-def fetch(language: str) -> None:
-    """Gewichte (und die fertige Stimme) in einem eigenen Prozess mit
-    Internetzugang in den HF-Cache laden."""
+def fetch(language: str, voice: str | None = None) -> None:
+    """Gewichte (und die fertige Stimme bzw. die Stimm-Aufnahme) in einem
+    eigenen Prozess mit Internetzugang in den HF-Cache laden."""
     env = dict(os.environ, HF_HUB_OFFLINE="0")
     if not env.get("HF_TOKEN"):
         env.pop("HF_TOKEN", None)
     log.info("Pocket TTS: lade Modell %s herunter (einmalig) …", language)
     t0 = time.perf_counter()
-    res = subprocess.run([sys.executable, "-m", "app.pocket", language], env=env,
+    res = subprocess.run([sys.executable, "-m", "app.pocket", language, *([voice] if voice else [])],
+                         env=env,
                          capture_output=True, text=True, timeout=1800)
     if res.returncode != 0:
         raise RuntimeError(f"Pocket-TTS-Download fehlgeschlagen: {res.stderr.strip()[-500:]}")
@@ -108,16 +109,37 @@ class PocketEngine:
         self._models[language] = model
         return model
 
+    @staticmethod
+    def _voice_source(voice: str) -> tuple[str, bool]:
+        """"audio:NAME" = Kyutai-Katalogstimme aus ihrer Original-Aufnahme
+        klonen (für Stimmen ohne fertige deutsche Einbettung). Liefert
+        (Quelle, braucht Stimmklonen)."""
+        if voice.startswith("audio:"):
+            from pocket_tts.utils.utils import _ORIGINS_OF_PREDEFINED_VOICES
+
+            return _ORIGINS_OF_PREDEFINED_VOICES[voice.removeprefix("audio:")], True
+        return voice, False
+
     def _state(self, model, language: str, voice: str, ref_wav: str | None):
         if ref_wav:
             key = (language, ref_wav, Path(ref_wav).stat().st_mtime)
         else:
             key = (language, voice)
         if key not in self._states:
-            if ref_wav and not model.has_voice_cloning:
+            source, needs_cloning = (ref_wav, True) if ref_wav else self._voice_source(voice)
+            if needs_cloning and not model.has_voice_cloning:
                 raise RuntimeError(CLONE_HINT)
             t0 = time.perf_counter()
-            self._states[key] = model.get_state_for_audio_prompt(ref_wav or voice, truncate=True)
+            try:
+                state = model.get_state_for_audio_prompt(source, truncate=True)
+            except Exception as exc:
+                if ref_wav:
+                    raise
+                # Stimme noch nicht im Cache (Container läuft offline) -> holen
+                log.info("Pocket TTS: Stimme %s nicht im Cache (%s)", voice, type(exc).__name__)
+                fetch(language, source)
+                state = model.get_state_for_audio_prompt(source, truncate=True)
+            self._states[key] = state
             log.info("Pocket TTS: Stimme %s vorbereitet in %.1f s",
                      Path(ref_wav).stem if ref_wav else voice, time.perf_counter() - t0)
         return self._states[key]
@@ -156,6 +178,9 @@ if __name__ == "__main__":  # Download-Prozess (siehe fetch)
 
     language = sys.argv[1]
     m = TTSModel.load_model(language=language)
-    voice = DEFAULT_VOICE_FOR_LANGUAGE.get(language.split("_")[0], "juergen")
-    m.get_state_for_audio_prompt(voice)  # fertige Stimme mit herunterladen
+    if len(sys.argv) > 2:
+        voice = sys.argv[2]  # bestimmte Stimme/Aufnahme laden
+    else:
+        voice = DEFAULT_VOICE_FOR_LANGUAGE.get(language.split("_")[0], "juergen")
+    m.get_state_for_audio_prompt(voice, truncate=True)
     print(f"ok {language} stimmklonen={'ja' if m.has_voice_cloning else 'nein'} stimme={voice}")
