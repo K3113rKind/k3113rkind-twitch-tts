@@ -16,7 +16,9 @@ Style-Vector-Indizierung), wie im Referenzskript von semidark/kikiri-tts.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 
 from . import voices as voices_mod
 
@@ -52,7 +54,15 @@ def _resample(samples, sr_in: int, sr_out: int):
 
 class QwenEngine:
     """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
-    Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben."""
+    Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
+
+    Stellschrauben (Umgebungsvariablen, siehe docker-compose.yml / .env):
+      QWEN_THREADS  Anzahl Torch-Threads; 0 = alle sichtbaren Kerne.
+                    Oft schneller: nur echte Kerne eines CPU-Sockels statt
+                    Hyper-Threads über beide Sockel verteilt.
+      QWEN_INT8     1 = Sprachmodell (Talker) dynamisch auf int8 quantisieren.
+                    Experimentell: meist schneller auf CPU, Klang kann leiden.
+    """
 
     def __init__(self) -> None:
         self._repo: str | None = None
@@ -75,18 +85,37 @@ class QwenEngine:
 
             self._model = None
             gc.collect()
-            log.info("Lade Qwen3-TTS: %s (%d Threads)", repo_id, torch.get_num_threads())
-            self._model = Qwen3TTSModel.from_pretrained(
+            threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
+            if threads > 0:
+                torch.set_num_threads(threads)
+            int8 = os.environ.get("QWEN_INT8", "0") == "1"
+            log.info(
+                "Lade Qwen3-TTS: %s (%d Threads, int8 %s)",
+                repo_id, torch.get_num_threads(), "an" if int8 else "aus",
+            )
+            model = Qwen3TTSModel.from_pretrained(
                 str(snapshot), device_map="cpu", dtype=torch.float32
             )
+            if int8:
+                model.model.talker = torch.ao.quantization.quantize_dynamic(
+                    model.model.talker, {torch.nn.Linear}, dtype=torch.qint8
+                )
+            self._model = model
             self._repo = repo_id
 
     def synthesize(self, text: str, repo_id: str, speaker: str):
         self.load(repo_id)
         with self._lock:
+            t0 = time.perf_counter()
             wavs, sr = self._model.generate_custom_voice(
                 text=text, language="German", speaker=speaker
             )
+            took = time.perf_counter() - t0
+        dur = len(wavs[0]) / int(sr) if sr else 0.0
+        log.info(
+            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
+            repo_id.split("-12Hz-")[-1], speaker, took, dur, took / dur if dur else 0.0,
+        )
         return _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
 
 
