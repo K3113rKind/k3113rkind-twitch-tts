@@ -82,8 +82,12 @@ QWEN_CHUNK_PAUSE_S = 0.25
 
 
 # Der erste Abschnitt eines langen Texts ist kürzer, damit der Ton schneller
-# startet; die übrigen rechnen, während er läuft.
+# startet; die übrigen rechnen, während er läuft. Danach wachsen die
+# Abschnitte schrittweise (x1,4): Ein Abschnitt ist dann fertig, bevor der
+# vorherige zu Ende gesprochen ist (bei RTF bis ~0,7) – keine Pause nach dem
+# ersten Satz. Ein großer Sprung von 120 auf 300 Zeichen verursachte eine.
 QWEN_FIRST_CHUNK_CHARS = 120
+QWEN_CHUNK_GROWTH = 1.4
 
 
 def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
@@ -92,9 +96,23 @@ def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
     first_max: kürzere Obergrenze nur für den ersten Abschnitt."""
     if first_max and len(text.strip()) > first_max:
         # Leerraum vereinheitlichen, damit der Rest exakt hinter dem Kopf beginnt
-        flat = re.sub(r"\s+", " ", text).strip()
-        head, rest = _take_head(flat, first_max)
-        return [head] + split_for_qwen(rest, max_chars) if rest else [head]
+        rest = re.sub(r"\s+", " ", text).strip()
+        chunks: list[str] = []
+        limit = first_max
+        while rest:
+            if len(rest) <= limit:
+                chunks.append(rest)
+                break
+            head, rest = _take_head(rest, limit)
+            chunks.append(head)
+            # vom tatsächlich erzeugten Abschnitt aus wachsen, aber nie unter die
+            # bisherige Grenze schrumpfen (sonst zerfällt ein Text mit langen
+            # Sätzen in immer kleinere Stücke mitten im Satz)
+            limit = min(max_chars, max(int(limit * 1.2), int(len(head) * QWEN_CHUNK_GROWTH)))
+        # winzigen Rest an den vorletzten Abschnitt hängen, wenn er passt
+        if len(chunks) > 1 and len(chunks[-1]) < 40 and len(chunks[-2]) + 1 + len(chunks[-1]) <= max_chars:
+            chunks[-2] += " " + chunks.pop()
+        return chunks
     text = text.strip()
     if len(text) <= max_chars:
         return [text] if text else []
