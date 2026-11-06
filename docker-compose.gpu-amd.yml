@@ -1,0 +1,22 @@
+# AMD-Grafikkarte (ROCm) für die Qwen-Stimmen – Ergänzung zu docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-amd.yml up -d --build
+#
+# Torch kommt als ROCm-Wheel (bringt die ROCm-Laufzeit selbst mit); auf dem
+# Rechner selbst genügt der normale amdgpu-Treiber. Die App erkennt die Karte
+# automatisch (QWEN_DEVICE=auto) und rechnet Qwen dann auf der GPU; Kokoro
+# bleibt auf der CPU, da es dort ohnehin schneller als Echtzeit ist.
+# RX 9070 / 9070 XT (RDNA4) brauchen ROCm 7.2 oder neuer.
+services:
+  twitch-tts:
+    build:
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/rocm7.2
+    image: k3113rkind-twitch-tts:rocm
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      - QWEN_DEVICE=auto

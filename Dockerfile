@@ -8,13 +8,17 @@ RUN apt-get update \
 
 WORKDIR /srv/app
 
-# Torch zuerst als reines CPU-Wheel, damit requirements.txt (kokoro -> torch)
-# nicht die CUDA-Variante nachzieht.
+# Torch zuerst aus dem passenden Index, damit requirements.txt (kokoro -> torch)
+# nicht die große CUDA-Variante von PyPI nachzieht. Standard: reine CPU.
+# GPU-Varianten setzen TORCH_INDEX per Compose-Override, z. B.
+#   AMD (ROCm):  https://download.pytorch.org/whl/rocm7.2   (docker-compose.gpu-amd.yml)
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
-RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
+RUN pip install --no-cache-dir torch torchaudio --index-url "$TORCH_INDEX" \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir qwen-tts --extra-index-url https://download.pytorch.org/whl/cpu \
-    && python -c "import torch; assert not torch.version.cuda, 'CUDA-Torch im Image'"
+    && pip install --no-cache-dir qwen-tts --extra-index-url "$TORCH_INDEX" \
+    && python -c "import torch; print('Torch', torch.__version__, 'HIP', torch.version.hip, 'CUDA', torch.version.cuda)" \
+    && case "$TORCH_INDEX" in *cpu) python -c "import torch; assert not torch.version.cuda, 'CUDA-Torch im CPU-Image'";; esac
 
 COPY app ./app
 COPY static ./static

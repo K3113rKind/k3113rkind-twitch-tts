@@ -249,7 +249,7 @@ function showPerf(p) {
   if (p.decode_s >= 0.1) text += ` · davon Klang-Decoder ${fmt(p.decode_s)} s`;
   if (p.load_s >= 1) text += ` · + ${fmt(p.load_s)} s Modell laden`;
   el.perf.innerHTML = text;
-  el.perf.append(" · " + p.voice);
+  el.perf.append(" · " + p.voice + (p.device ? ` · ${p.device}` : ""));
 }
 
 /* ------------------------------------------------------- Konfiguration */

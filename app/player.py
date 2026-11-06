@@ -230,6 +230,7 @@ class ChatSpeaker:
             "load_s": round(result.load_seconds, 2),
             "audio_s": round(result.duration_seconds, 2),
             "cached": result.cached,
+            "device": getattr(self.tts, "qwen_device", None) if VOICES[voice].get("engine", "").startswith("qwen") else None,
             "decode_s": round(result.decode_seconds, 2),
             "rtf": round(result.compute_seconds / result.duration_seconds, 2)
             if result.duration_seconds else None,

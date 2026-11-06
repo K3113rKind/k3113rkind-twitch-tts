@@ -129,6 +129,19 @@ QWEN_CACHE_SIZE = 64
 QWEN_REF_DECODE_S = float(os.environ.get("QWEN_REF_DECODE_S", "2") or 2)
 
 
+def _qwen_device():
+    """GPU nutzen, wenn eine da ist (NVIDIA per CUDA oder AMD per ROCm – beide
+    erscheinen in Torch als "cuda"), sonst CPU. QWEN_DEVICE=cpu erzwingt CPU."""
+    import torch
+
+    wanted = os.environ.get("QWEN_DEVICE", "auto").strip().lower()
+    if wanted != "cpu" and torch.cuda.is_available():
+        # bfloat16 auf der GPU: halber Speicher, deutlich schneller; von Qwen
+        # so empfohlen. Auf der CPU bleibt es bei float32 (Skylake ohne bf16).
+        return "cuda:0", torch.bfloat16, torch.cuda.get_device_name(0)
+    return "cpu", torch.float32, "CPU"
+
+
 class QwenEngine:
     """Qwen3-TTS auf CPU – Preset-Stimmen (CustomVoice-Modelle) und eigene
     Stimmen (Base-Modelle mit Referenzaufnahme). Hält nur ein Modell im RAM –
@@ -151,6 +164,7 @@ class QwenEngine:
         self._decode_s = 0.0
         self.last_decode_s = 0.0
         self._trim_codes = 0  # beim Klonen: so viele Referenz-Schritte nicht decodieren
+        self.device_name = None  # "CPU" oder Name der Grafikkarte, sobald geladen
 
     @staticmethod
     def _decode_trimmed(original_decode, encoded, trim, *args, **kwargs):
@@ -188,10 +202,13 @@ class QwenEngine:
             threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
             if threads > 0:
                 torch.set_num_threads(threads)
-            log.info("Lade Qwen3-TTS: %s (%d Threads)", repo_id, torch.get_num_threads())
-            model = Qwen3TTSModel.from_pretrained(
-                str(snapshot), device_map="cpu", dtype=torch.float32
+            device, dtype, device_name = _qwen_device()
+            log.info(
+                "Lade Qwen3-TTS: %s auf %s (%s)", repo_id, device_name,
+                f"{torch.get_num_threads()} Threads" if device == "cpu" else str(dtype),
             )
+            model = Qwen3TTSModel.from_pretrained(str(snapshot), device_map=device, dtype=dtype)
+            self.device_name = device_name
             # Zeit des Klang-Decoders mitmessen (Diagnose: Anteil an der Rechenzeit)
             tokenizer = model.model.speech_tokenizer
             original_decode = tokenizer.decode
@@ -295,6 +312,10 @@ class TTS:
 
     def is_ready(self) -> bool:
         return self._ready
+
+    @property
+    def qwen_device(self) -> str | None:
+        return self._qwen.device_name
 
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
