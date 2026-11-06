@@ -572,6 +572,7 @@ class TTS:
         # deshalb einmalig und gecacht.
         self._pipelines: dict[tuple[str, str], object] = {}
         self._packs: dict[str, object] = {}
+        self._pack_mtime: dict[str, float | None] = {}
         self._lock = threading.Lock()
         self._ready = False
         self._qwen = QwenEngine()
@@ -875,6 +876,15 @@ class TTS:
 
         t_load = time.perf_counter()
         cache_key = (spec["backbone"], spec["lang"])
+        if spec.get("voicepack_file"):
+            # eigenes Stimmpaket: wird während der Suche ersetzt -> neu laden
+            try:
+                mtime = os.path.getmtime(spec["voicepack_file"])
+            except OSError:
+                mtime = None
+            if self._pack_mtime.get(voice_key) != mtime:
+                self._packs.pop(voice_key, None)
+                self._pack_mtime[voice_key] = mtime
         if cache_key not in self._pipelines or voice_key not in self._packs:
             self.load(voice_key)
         t0 = time.perf_counter()

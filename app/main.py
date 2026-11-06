@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import re
 import shutil
 import sys
@@ -402,11 +403,65 @@ async def clone_delete(name: str):
         config.update(changes)
     for suffix in (".wav", ".txt"):
         (folder / f"{name}{suffix}").unlink(missing_ok=True)
+    (folder / "kokoro" / f"{name}.pt").unlink(missing_ok=True)
     sync_clone_voices()
     tts.forget_clone(name)
     log.info("Eigene Stimme %s gelöscht", name)
     await broadcaster.send({"type": "voices_changed"})
     return {"ok": True, "voice": config.get("voice")}
+
+
+training_job: dict = {"running": False, "name": None, "done": 0, "total": 0, "error": None}
+
+
+@app.post("/api/training/{name}")
+async def training_start(name: str, size: str = "0.6b"):
+    """Trainingsmaterial für eine eigene Stimme mit Qwen erzeugen
+    (/config/training/NAME/NNN.wav + .txt) – Grundlage für ein eigenes
+    Kokoro-Stimmpaket (app/kokoro_walk.py). Nur bei gestopptem Chat."""
+    from .training_texts import TRAINING_TEXTS
+
+    name = name.strip().lower()
+    voice = f"klon-{size}-{name}"
+    sync_clone_voices()
+    if not CLONE_NAME.match(name) or not is_available(voice):
+        raise HTTPException(404, f"Eigene Stimme {name} ({size}) nicht verfügbar.")
+    if state["twitch"] is not None:
+        raise HTTPException(409, "Bitte erst „Vorlesen stoppen“.")
+    if training_job["running"]:
+        raise HTTPException(409, "Es läuft schon eine Erzeugung.")
+    out = Path(os.environ.get("CONFIG_PATH", "/config/config.json")).parent / "training" / name
+    out.mkdir(parents=True, exist_ok=True)
+    training_job.update(running=True, name=name, done=0, total=len(TRAINING_TEXTS), error=None)
+    temperature = config.get("qwen_temperature")
+
+    async def one(i: int, text: str) -> None:
+        import soundfile as sf
+
+        result = await asyncio.to_thread(tts.synthesize, text, voice, 1.0, temperature, None)
+        sf.write(out / f"{i:03d}.wav", result.samples, result.sample_rate)
+        (out / f"{i:03d}.txt").write_text(text + "\n", encoding="utf-8")
+        training_job["done"] += 1
+        log.info("Trainingsmaterial %s: %d/%d", name, training_job["done"], training_job["total"])
+
+    async def run() -> None:
+        t0 = time.monotonic()
+        try:
+            await asyncio.gather(*(one(i, t) for i, t in enumerate(TRAINING_TEXTS, 1)))
+            log.info("Trainingsmaterial %s fertig in %.0f s: %s", name, time.monotonic() - t0, out)
+        except Exception as exc:
+            training_job["error"] = str(exc)
+            log.error("Trainingsmaterial %s fehlgeschlagen: %s", name, exc)
+        finally:
+            training_job["running"] = False
+
+    asyncio.create_task(run())
+    return training_job
+
+
+@app.get("/api/training")
+async def training_status():
+    return training_job
 
 
 @app.post("/api/skip")

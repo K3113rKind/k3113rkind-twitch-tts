@@ -124,8 +124,13 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
             "lang": "d",
         }
 
+# Eigene Kokoro-Stimmpakete (app/kokoro_walk.py): /ref/kokoro/NAME.pt, laufen
+# auf dem deutschen Victoria-Backbone. Werden während der Suche laufend
+# verbessert – die Datei wird dabei ersetzt.
+KOKORO_CUSTOM_BACKBONE = "kikiri_german_victoria_ep10"
+
 # Schlüssel-Präfixe einer eigenen Stimme NAME: klon-<präfix>-NAME
-CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS]
+CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS, "kokoro"]
 
 
 def clone_keys(name: str) -> set[str]:
@@ -162,8 +167,16 @@ def sync_clone_voices() -> None:
                     "ref_wav": str(wav),
                     "lang": "d",
                 }
+        for pack in sorted((folder / "kokoro").glob("*.pt")):
+            wanted[f"klon-kokoro-{pack.stem}"] = {
+                "label": f"{pack.stem} · eigene Stimme, Kokoro – Deutsch (Test)",
+                "backbone": KOKORO_CUSTOM_BACKBONE,
+                "voicepack_file": str(pack),
+                "custom_kokoro": True,
+                "lang": "d",
+            }
     for key in [k for k, v in list(VOICES.items())
-                if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE)]:
+                if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE) or v.get("custom_kokoro")]:
         if key not in wanted:
             VOICES.pop(key, None)
     VOICES.update(wanted)
@@ -215,7 +228,10 @@ def backbone_path(voice_key: str) -> Path:
 
 
 def voicepack_path(voice_key: str) -> Path:
-    return models_dir() / "voices" / f"{VOICES[voice_key]['voicepack']}.pt"
+    spec = VOICES[voice_key]
+    if spec.get("voicepack_file"):
+        return Path(spec["voicepack_file"])
+    return models_dir() / "voices" / f"{spec['voicepack']}.pt"
 
 
 def config_path() -> Path:

@@ -52,6 +52,13 @@ RUN TORCH_BEFORE=$(python -c "import torch; print(torch.__version__)") \
     && python -c "import torch, sys; v=torch.__version__; print('Torch nach Pocket TTS:', v); sys.exit(v != '$TORCH_BEFORE')" \
     && python -c "import pocket_tts; print('pocket-tts', __import__('importlib.metadata').metadata.version('pocket-tts'))"
 
+# Eigene Kokoro-Stimmpakete suchen (app/kokoro_walk.py): Resemblyzer als
+# Stimm-Fingerabdruck. webrtcvad als fertiges Wheel (das Original müsste
+# kompiliert werden), resemblyzer deshalb ohne Abhängigkeiten.
+RUN pip install --no-cache-dir webrtcvad-wheels \
+    && pip install --no-cache-dir --no-deps resemblyzer \
+    && python -c "import resemblyzer, librosa; print('resemblyzer ok')"
+
 COPY app ./app
 COPY static ./static
 
