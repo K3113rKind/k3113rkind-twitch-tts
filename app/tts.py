@@ -578,6 +578,7 @@ class TTS:
         from .pocket import PocketEngine
 
         self._pocket = PocketEngine()
+        self._pool = None  # mehrere Qwen-Rechenprozesse (CPU), siehe pool_active
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
@@ -613,64 +614,61 @@ class TTS:
         with self._batch_lock:
             return key in self._prefetched or key in self._qwen_cache
 
-    def prefetch_batch(self, texts: list[str], voice_key: str,
-                       temperature: float | None = None, instruct: str | None = None) -> int:
-        """Mehrere Texte gemeinsam vorab berechnen (blockierend, im Thread
-        aufrufen). synthesize() holt die Ergebnisse später ab oder wartet auf
-        die laufende Gruppe. Liefert die Zahl tatsächlich berechneter Texte."""
-        if not voices_mod.is_qwen(voice_key) or voice_key not in voices_mod.VOICES:
-            return 0
-        spec = voices_mod.VOICES[voice_key]
-        with self._batch_lock:
-            todo: dict[tuple, str] = {}
-            for text in texts:
-                key = self._qwen_key(voice_key, spec, temperature, instruct, text)
-                if (key in self._qwen_cache or key in self._prefetched
-                        or key in self._inflight or key in todo):
-                    continue
-                todo[key] = text
-            for key in todo:
-                self._inflight[key] = threading.Event()
-        if not todo:
-            return 0
-        try:
-            self.load(voice_key)
-            results, took = self._qwen.synthesize_batch(
-                list(todo.values()), spec["model"], spec.get("speaker"),
-                spec.get("ref_wav"), spec.get("ref_txt"), temperature,
-                instruct if spec.get("engine") == "qwen" else None,
+    def _qwen_compute(self, voice_key: str, spec: dict, text: str,
+                      temperature=None, instruct=None) -> SynthesisResult:
+        """Qwen rechnen – im Hauptprozess oder in einem freien Rechenprozess."""
+        instruct = instruct if spec.get("engine") == "qwen" else None
+        t_load = time.perf_counter()
+        self.load(voice_key)
+        t0 = time.perf_counter()
+        if self.pool_active:
+            samples, compute_s, load_s, decode_s = self._pool.submit(dict(
+                repo=spec["model"], speaker=spec.get("speaker"), ref_wav=spec.get("ref_wav"),
+                ref_txt=spec.get("ref_txt"), temperature=temperature, instruct=instruct,
+                text=text,
+            ))
+        else:
+            samples = self._qwen.synthesize(
+                text, spec["model"], spec.get("speaker"),
+                spec.get("ref_wav"), spec.get("ref_txt"), temperature, instruct,
             )
-            total = sum(len(a) for a, _ in results) or 1
+            compute_s, load_s, decode_s = (time.perf_counter() - t0, t0 - t_load,
+                                           self._qwen.last_decode_s)
+        if len(samples) == 0:
+            raise ValueError("Kein Audio erzeugt.")
+        return SynthesisResult(
+            samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+            sample_rate=SAMPLE_RATE, compute_seconds=compute_s, load_seconds=load_s,
+            decode_seconds=decode_s,
+        )
+
+    def prefetch_one(self, text: str, voice_key: str,
+                     temperature: float | None = None, instruct: str | None = None) -> bool:
+        """Text vorab berechnen (blockierend, im Thread aufrufen) – für die
+        parallelen Rechenprozesse. synthesize() holt das Ergebnis später ab
+        oder wartet, bis es fertig ist."""
+        if not voices_mod.is_qwen(voice_key) or voice_key not in voices_mod.VOICES:
+            return False
+        spec = voices_mod.VOICES[voice_key]
+        key = self._qwen_key(voice_key, spec, temperature, instruct, text)
+        with self._batch_lock:
+            if key in self._qwen_cache or key in self._prefetched or key in self._inflight:
+                return False
+            event = self._inflight[key] = threading.Event()
+        try:
+            result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
             with self._batch_lock:
-                for key, (audio, sim) in zip(todo, results):
-                    # Klingt ein Ergebnis nicht nach der Vorlage, wird es nicht
-                    # übernommen – die Nachricht rechnet dann einzeln (mit
-                    # erneutem Versuch, siehe Stimm-Prüfung).
-                    if sim is not None and sim < QWEN_SPK_MIN:
-                        log.warning("Gruppe: Stimm-Ähnlichkeit %.2f zu niedrig – Nachricht "
-                                    "wird einzeln neu erzeugt", sim)
-                        continue
-                    if len(audio) == 0:
-                        continue
-                    self._prefetched[key] = SynthesisResult(
-                        samples=audio, duration_seconds=len(audio) / SAMPLE_RATE,
-                        sample_rate=SAMPLE_RATE,
-                        compute_seconds=took * len(audio) / total,
-                        decode_seconds=self._qwen.last_decode_s * len(audio) / total,
-                        batch=len(todo),
-                    )
+                self._prefetched[key] = result
                 while len(self._prefetched) > QWEN_CACHE_SIZE:
                     self._prefetched.popitem(last=False)
-            return len(todo)
-        except Exception as exc:  # Gruppe gescheitert -> Nachrichten rechnen einzeln
-            log.warning("Gruppenberechnung fehlgeschlagen: %s", exc)
-            return 0
+            return True
+        except Exception as exc:  # die Nachricht rechnet dann beim Abspielen einzeln
+            log.warning("Vorab-Berechnung fehlgeschlagen: %s", exc)
+            return False
         finally:
             with self._batch_lock:
-                for key in todo:
-                    event = self._inflight.pop(key, None)
-                    if event:
-                        event.set()
+                self._inflight.pop(key, None)
+            event.set()
 
     def forget_clone(self, name: str) -> None:
         """Nach dem Löschen einer eigenen Stimme: vorberechnete Referenz und
@@ -685,7 +683,33 @@ class TTS:
 
     @property
     def qwen_device(self) -> str | None:
+        if self.pool_active:
+            return f"CPU · {self._pool.workers} Prozesse"
         return self._qwen.device_name
+
+    @property
+    def pool_active(self) -> bool:
+        """Mehrere Qwen-Rechenprozesse? Nur mit QWEN_WORKERS > 1 und ohne GPU."""
+        if self._pool is not None:
+            return True
+        from .qwen_pool import QWEN_WORKERS, QwenPool
+
+        if QWEN_WORKERS <= 1:
+            return False
+        try:
+            import torch
+
+            if torch.cuda.is_available() and os.environ.get("QWEN_DEVICE", "auto") != "cpu":
+                return False  # GPU: ein Prozess ist schneller
+            threads = int(os.environ.get("QWEN_THREADS", "0") or 0) or torch.get_num_threads()
+        except Exception:
+            return False
+        self._pool = QwenPool(QWEN_WORKERS, threads)
+        return True
+
+    @property
+    def pool_workers(self) -> int:
+        return self._pool.workers if self.pool_active else 1
 
     warming = False
 
@@ -707,6 +731,19 @@ class TTS:
         t0 = time.perf_counter()
         log.info("Aufwärmen: lade %s …", voice_key)
         try:
+            if self.pool_active:
+                spec = voices_mod.VOICES[voice_key]
+                from concurrent.futures import ThreadPoolExecutor
+
+                args = dict(repo=spec["model"], speaker=spec.get("speaker"),
+                            ref_wav=spec.get("ref_wav"), ref_txt=spec.get("ref_txt"),
+                            text=WARMUP_TEXTS[0])
+                allowed = sorted(self._pool._allowed(spec["model"]))
+                with ThreadPoolExecutor(len(allowed)) as ex:
+                    list(ex.map(lambda i: self._pool.submit(dict(args), worker=i), allowed))
+                log.info("Qwen in %d Rechenprozessen geladen in %.0f s",
+                         len(allowed), time.perf_counter() - t0)
+                return
             self.load(voice_key)
             if (self._qwen.device_name or "CPU") == "CPU":
                 log.info("Qwen-Modell vorgeladen (CPU, kein Aufwärmen nötig)")
@@ -736,7 +773,10 @@ class TTS:
                 raise FileNotFoundError(
                     f"Für die Stimme '{spec['label']}' fehlt das Qwen-Modell oder das Paket qwen-tts."
                 )
-            self._qwen.load(spec["model"])
+            if self.pool_active:
+                self._pool.start()  # Prozesse laden ihr Modell beim ersten Auftrag
+            else:
+                self._qwen.load(spec["model"])
             self._ready = True
             return
 
@@ -825,27 +865,11 @@ class TTS:
                     samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
                     sample_rate=SAMPLE_RATE, cached=True,
                 )
-            t_load = time.perf_counter()
-            self.load(voice_key)
-            t0 = time.perf_counter()
-            samples = self._qwen.synthesize(
-                text, spec["model"], spec.get("speaker"),
-                spec.get("ref_wav"), spec.get("ref_txt"), temperature,
-                instruct if spec.get("engine") == "qwen" else None,
-            )
-            if len(samples) == 0:
-                raise ValueError("Kein Audio erzeugt.")
-            self._qwen_cache[key] = samples
+            result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
+            self._qwen_cache[key] = result.samples
             while len(self._qwen_cache) > QWEN_CACHE_SIZE:
                 self._qwen_cache.popitem(last=False)
-            return SynthesisResult(
-                samples=samples,
-                duration_seconds=len(samples) / SAMPLE_RATE,
-                sample_rate=SAMPLE_RATE,
-                compute_seconds=time.perf_counter() - t0,
-                load_seconds=t0 - t_load,
-                decode_seconds=self._qwen.last_decode_s,
-            )
+            return result
 
         t_load = time.perf_counter()
         cache_key = (spec["backbone"], spec["lang"])

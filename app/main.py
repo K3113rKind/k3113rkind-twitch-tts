@@ -23,7 +23,7 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import (DEFAULT_VOICE, available_voices, clone_keys, is_available,
+from .voices import (DEFAULT_VOICE, available_voices, clone_keys, is_available, is_qwen,
                      ref_dir, sync_clone_voices)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -208,6 +208,10 @@ async def apply_voice():
     except Exception as exc:
         raise HTTPException(500, f"Stimme konnte nicht geladen werden: {exc}")
     speaker.skip()
+    # Mehrere Qwen-Rechenprozesse: Modell gleich in allen laden, nicht erst
+    # bei den ersten Nachrichten (je ~10 s Wartezeit)
+    if tts.pool_active and is_qwen(voice) and not tts.warming:
+        asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
     return _status()
 
 
@@ -218,6 +222,8 @@ async def say(body: dict):
     text = str(body.get("text", "")).strip()
     if not text:
         raise HTTPException(400, "Bitte einen Text eingeben.")
+    if state["twitch"] is not None:
+        raise HTTPException(409, "Testtext ist gesperrt, solange der Chat vorgelesen wird.")
 
     voice = config.get("voice")
     if not is_available(voice):

@@ -51,9 +51,6 @@ DEFAULTS: dict[str, Any] = {
     "voice_labels": {},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
-    # Qwen: so viele wartende Nachrichten gemeinsam berechnen (1 = einzeln).
-    # Auf der CPU steigt der Durchsatz damit stark, die Verzögerung aber auch.
-    "qwen_batch": 8,
     "bot_blocklist": [
         "nightbot",
         "streamelements",
@@ -124,9 +121,7 @@ class ConfigStore:
         for key, value in changes.items():
             if key not in DEFAULTS:
                 continue
-            if key == "qwen_batch":
-                value = max(1, min(16, int(value)))
-            elif key in ("cooldown_seconds", "queue_limit"):
+            if key in ("cooldown_seconds", "queue_limit"):
                 value = max(0, int(value))
                 if key == "queue_limit":
                     value = max(1, value)

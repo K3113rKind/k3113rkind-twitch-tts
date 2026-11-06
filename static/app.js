@@ -10,13 +10,13 @@ const el = {
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
   keepAwake: $("keep_speakers_awake"),
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
-  cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"), qwenBatch: $("qwen_batch"),
+  cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
-  sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"),
+  sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
   cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
   cloneList: $("clone-list"), cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
@@ -218,6 +218,7 @@ function applyStatus(s) {
   el.startstop.classList.toggle("running", s.running);
   running = s.running;
   updateSkipButton();
+  updateSayButton();
   fillVoices(s.voices || []);
   if (s.last_perf && !el.perf.textContent) showPerf(s.last_perf);
   if (s.error) showError(s.error); else hideError();
@@ -283,7 +284,6 @@ function showPerf(p) {
   if (p.decode_s >= 0.1) text += ` · davon Klang-Decoder ${fmt(p.decode_s)} s`;
   if (p.first_s != null && p.audio_s > 0 && p.compute_s - p.first_s > 0.5) text += ` · erster Ton nach ${fmt(p.first_s)} s`;
   if (p.load_s >= 1) text += ` · + ${fmt(p.load_s)} s Modell laden`;
-  if (p.batch > 1) text += ` · Gruppe aus ${p.batch} Nachrichten`;
   if (p.wait_s != null) text += ` · <b>${fmt(p.wait_s)} s</b> nach Eingang`;
   el.perf.innerHTML = text;
   el.perf.append(" · " + p.voice + (p.device ? ` · ${p.device}` : ""));
@@ -307,7 +307,6 @@ function collectConfig() {
     keepalive_level: parseFloat(el.keepaliveLevel.value),
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
-    qwen_batch: parseInt(el.qwenBatch.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
     qwen_temperature: parseFloat(el.temperature.value),
     qwen_style: el.style.value,
@@ -340,7 +339,6 @@ function applyConfig(c) {
   el.keepaliveLevel.value = c.keepalive_level;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
-  el.qwenBatch.value = c.qwen_batch;
   el.blocklist.value = c.bot_blocklist.join("\n");
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
@@ -366,7 +364,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.qwenBatch, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; updateTemperatureRow(); });
@@ -479,11 +477,21 @@ el.startstop.addEventListener("click", async () => {
 });
 
 /* ------------------------------------------------------------- Testtext */
+// Testtext nur, wenn der Chat nicht vorgelesen wird
+let sayBusy = false;
+function updateSayButton() {
+  el.sayBtn.disabled = running || sayBusy;
+  el.sayText.disabled = running;
+  el.sayHint.classList.toggle("hidden", !running);
+}
+
 el.sayBtn.addEventListener("click", async () => {
   const text = el.sayText.value.trim();
   if (!text) { el.sayText.focus(); return; }
+  if (running) return;
   ensureAudio(); // Nutzer-Geste: löst die Autoplay-Sperre des Browsers
-  el.sayBtn.disabled = true;
+  sayBusy = true;
+  updateSayButton();
   try {
     // Aktuelle Stimme/Geschwindigkeit sofort speichern, nicht erst nach 300 ms
     clearTimeout(saveTimer);
@@ -506,7 +514,8 @@ el.sayBtn.addEventListener("click", async () => {
   } catch (e) {
     showError("Vorlesen fehlgeschlagen: " + e);
   } finally {
-    el.sayBtn.disabled = false;
+    sayBusy = false;
+    updateSayButton();
   }
 });
 

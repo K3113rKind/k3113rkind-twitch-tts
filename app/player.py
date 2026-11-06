@@ -26,9 +26,9 @@ from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_av
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
-# Gruppenberechnung: Texte bis zu dieser Länge (Zeichen, inkl. Name) gelten
-# als kurz – sie werden bevorzugt und unter sich gerechnet.
-BATCH_SHORT_CHARS = 60
+# Mehrere Rechenprozesse: Texte bis zu dieser Länge (Zeichen, inkl. Name)
+# gelten als kurz und werden bevorzugt gerechnet.
+SHORT_CHARS = 60
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class ChatSpeaker:
         self.last_perf: dict | None = None
         self.dropped_total = 0
         self._emote_fetches: set[str] = set()
-        self._batch_task: asyncio.Task | None = None
+        self._prefetch_tasks: set[asyncio.Future] = set()
 
     def _ensure_emote_fetch(self, room_id: str) -> None:
         """Emote-Listen einmal pro Kanal im Hintergrund laden."""
@@ -211,9 +211,10 @@ class ChatSpeaker:
             self._maybe_prefetch()
             msg = self._pick_next()
             if msg is None:
-                # Alles Wartende steckt in einer laufenden Gruppe -> auf sie warten
-                if self._batch_task and not self._batch_task.done():
-                    await asyncio.wait({self._batch_task})
+                # Alles Wartende rechnet noch -> auf die nächste fertige warten
+                if self._prefetch_tasks:
+                    await asyncio.wait(set(self._prefetch_tasks),
+                                       return_when=asyncio.FIRST_COMPLETED)
                 continue
             self._queue.remove(msg)
             await self._push_queue_state()
@@ -224,25 +225,25 @@ class ChatSpeaker:
                 await self.broadcaster.send({"type": "error", "message": str(exc)})
 
     def _pick_next(self) -> QueuedMessage | None:
-        """Welche Nachricht als Nächstes? Ohne Gruppenberechnung strikt der
-        Reihe nach. Mit Gruppen: die älteste, deren Audio schon fertig ist –
-        kurze Nachrichten überholen so lange, die noch rechnen."""
+        """Welche Nachricht als Nächstes? Mit einem Rechenprozess strikt der
+        Reihe nach. Mit mehreren: die älteste, deren Audio schon fertig ist –
+        kurze Nachrichten überholen so lange, die noch rechnen. Gespielt wird
+        trotzdem immer nur eine Nachricht nach der anderen."""
         cfg = self.config.as_dict()
         try:
             voice = self._voice(cfg)
         except RuntimeError:
             return self._queue[0]
-        if cfg["qwen_batch"] <= 1 or not is_qwen(voice):
+        if not (is_qwen(voice) and self.tts.pool_active):
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
         for m in self._queue:
             text = self._chunks(self._spoken_text(m, cfg, voice), voice)[0]
             if self.tts.has_result(text, voice, temperature, instruct):
                 return m
-        if self._batch_task and not self._batch_task.done():
+        if self._prefetch_tasks:
             return None  # gleich ist etwas fertig
-        # Nichts fertig und keine Gruppe aktiv (z. B. Ergebnis verworfen):
-        # älteste Nachricht direkt rechnen
+        # Nichts fertig und nichts in Arbeit (z. B. Fehler): älteste direkt rechnen
         return self._queue[0]
 
     async def cancel_test(self) -> None:
@@ -291,9 +292,9 @@ class ChatSpeaker:
         return chunks or [text]
 
     def _maybe_prefetch(self) -> None:
-        """Qwen auf der CPU: wartende Nachrichten (höchstens qwen_batch) in
-        einer Gruppe vorab berechnen. Läuft, während die aktuelle Nachricht
-        noch spielt – so hält der CT auch mit einem vollen Chat Schritt."""
+        """Qwen mit mehreren Rechenprozessen (CPU): wartende Nachrichten
+        sofort an freie Prozesse verteilen – auch während noch eine Nachricht
+        spielt. So hält der CT mit einem vollen Chat besser Schritt."""
         # Darf nie nach außen werfen: läuft u. a. direkt im Twitch-Empfang –
         # ein Fehler hier hat sonst die Chat-Verbindung gekappt.
         try:
@@ -302,49 +303,34 @@ class ChatSpeaker:
             log.warning("Gruppenberechnung nicht gestartet: %s", exc)
 
     def _prefetch_inner(self) -> None:
-        if self._batch_task and not self._batch_task.done():
+        if not self.tts.pool_active or not self._queue:
+            return
+        free = self.tts.pool_workers - len(self._prefetch_tasks)
+        if free <= 0:
             return
         cfg = self.config.as_dict()
-        size = cfg["qwen_batch"]
-        if size <= 1 or not self._queue:
-            return
         try:
             voice = self._voice(cfg)
         except RuntimeError:
             return
         if not is_qwen(voice):
             return
-        # Eine Gruppe dauert so lange wie ihre längste Nachricht (alle laufen
-        # im Gleichschritt, bis die letzte fertig ist). Deshalb:
-        #  - kurze Nachrichten zuerst und unter sich -> schnell hörbar
-        #  - lange danach, nur mit ähnlich langen zusammen
-        # Die Wiedergabe nimmt jeweils die älteste fertige Nachricht, die
-        # Reihenfolge kann sich also ändern.
-        candidates = []
-        for m in self._queue:
-            if not m.batched:
-                candidates.append((m, self._chunks(self._spoken_text(m, cfg, voice), voice)[0]))
-        if not candidates:
-            return
-        short = [c for c in candidates if len(c[1]) <= BATCH_SHORT_CHARS]
-        if short:
-            picked = short[:size]
-        else:
-            head_len = len(candidates[0][1])
-            picked = [candidates[0]]
-            for m, text in candidates[1:]:
-                if len(picked) >= size:
-                    break
-                if abs(len(text) - head_len) <= max(25, 0.4 * max(len(text), head_len)):
-                    picked.append((m, text))
-        texts = [text for _, text in picked]
-        for m, _ in picked:
-            m.batched = True
+        # Kurze Nachrichten zuerst (schnell hörbar), sonst der Reihe nach.
+        # Gespielt wird später die älteste fertige.
+        candidates = [(m, self._chunks(self._spoken_text(m, cfg, voice), voice)[0])
+                      for m in self._queue if not m.batched]
+        candidates.sort(key=lambda c: len(c[1]) > SHORT_CHARS)  # stabil: Reihenfolge bleibt
         _, temperature, instruct = self._gen_params(cfg)
-        self._batch_task = asyncio.ensure_future(asyncio.to_thread(
-            self.tts.prefetch_batch, texts, voice, temperature, instruct))
-        # Ist die Gruppe fertig, gleich die nächsten Wartenden anstoßen
-        self._batch_task.add_done_callback(lambda _t: self._maybe_prefetch())
+        for m, text in candidates[:free]:
+            m.batched = True
+            task = asyncio.ensure_future(asyncio.to_thread(
+                self.tts.prefetch_one, text, voice, temperature, instruct))
+            self._prefetch_tasks.add(task)
+            task.add_done_callback(self._prefetch_done)
+
+    def _prefetch_done(self, task) -> None:
+        self._prefetch_tasks.discard(task)
+        self._maybe_prefetch()
 
     async def _speak(self, msg: QueuedMessage) -> None:
         self._current_raw = msg.raw
@@ -382,17 +368,19 @@ class ChatSpeaker:
         t_start = time.perf_counter()
         first_audio_s = None
         utterance_id = None
-        pending = synth(chunks[0])
+        # Mehrere Rechenprozesse: alle Abschnitte gleichzeitig anstoßen
+        # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
+        # nächsten, während der aktuelle spielt.
+        parallel = is_qwen(voice) and self.tts.pool_active
+        pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
         skipped = False
 
         for idx in range(len(chunks)):
-            result, skipped = await self._wait_or_skip(pending)
+            result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 break
-            # Nächsten Abschnitt sofort anstoßen, damit er rechnet, während
-            # dieser hier gespielt wird.
-            if idx + 1 < len(chunks):
-                pending = synth(chunks[idx + 1])
+            if not parallel and idx + 1 < len(chunks):
+                pendings.append(synth(chunks[idx + 1]))
 
             totals["compute"] += result.compute_seconds
             totals["load"] += result.load_seconds
