@@ -153,6 +153,8 @@ class ChatSpeaker:
                 break
             self._queue.remove(victim)
             self.dropped_total += 1
+            log.info("Warteschlange voll (%d): verworfen %s: »%s«", limit,
+                     victim.username, victim.text[:60])
         self._queue_event.set()
         self._maybe_prefetch()
         await self._push_queue_state()
