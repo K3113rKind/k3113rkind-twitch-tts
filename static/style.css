@@ -175,6 +175,9 @@ input[type="range"] {
 .now .user { color: var(--accent); font-weight: 600; }
 .now .gen { color: var(--muted); font-style: italic; }
 .twitch-actions { margin-bottom: 0.9rem; }
+.advanced .sub { margin: 0.4rem 0 1.2rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.advanced .sub:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.advanced h3 { margin: 0.8rem 0 0.6rem; font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .req { color: var(--accent); }
 .file-row input[type=file] { margin-top: 0.3rem; width: 100%; color: var(--muted); font-size: 0.85rem; }
 .file-row input[type=file]::file-selector-button {
