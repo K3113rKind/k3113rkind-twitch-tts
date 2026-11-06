@@ -120,6 +120,14 @@ QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
 # kommt dann sofort statt nach 10–20 s Rechenzeit.
 QWEN_CACHE_SIZE = 64
 
+# Eigene Stimmen: Qwen wandelt bei jedem Satz die komplette Referenz (~10 s)
+# erneut mit in Ton um und schneidet sie danach ab – nur für einen sauberen
+# Übergang. Gemessen kostete das ein Drittel der Rechenzeit. Als Übergang
+# reichen die letzten Sekunden; der Rest wird durch Stille gleicher Länge
+# ersetzt, damit Qwens eigener Schnitt an derselben Stelle landet.
+# QWEN_REF_DECODE_S=0 schaltet die Kürzung ab (volle Referenz wie bisher).
+QWEN_REF_DECODE_S = float(os.environ.get("QWEN_REF_DECODE_S", "2") or 2)
+
 
 class QwenEngine:
     """Qwen3-TTS auf CPU – Preset-Stimmen (CustomVoice-Modelle) und eigene
@@ -142,6 +150,23 @@ class QwenEngine:
         self._clone_prompts: dict[tuple, object] = {}
         self._decode_s = 0.0
         self.last_decode_s = 0.0
+        self._trim_codes = 0  # beim Klonen: so viele Referenz-Schritte nicht decodieren
+
+    @staticmethod
+    def _decode_trimmed(original_decode, encoded, trim, *args, **kwargs):
+        """Nur das Ende der Referenz + die neue Ausgabe decodieren und vorne
+        mit Stille auf die volle Länge auffüllen."""
+        import numpy as np
+
+        totals = [len(item["audio_codes"]) for item in encoded]
+        shortened = [{**item, "audio_codes": item["audio_codes"][trim:]} for item in encoded]
+        wavs, fs = original_decode(shortened, *args, **kwargs)
+        padded = []
+        for wav, total in zip(wavs, totals):
+            kept = max(total - trim, 1)
+            pad = int(round(len(wav) * trim / kept))
+            padded.append(np.concatenate([np.zeros(pad, dtype=wav.dtype), wav]))
+        return padded, fs
 
     def load(self, repo_id: str) -> None:
         with self._lock:
@@ -171,10 +196,13 @@ class QwenEngine:
             tokenizer = model.model.speech_tokenizer
             original_decode = tokenizer.decode
 
-            def timed_decode(*args, **kwargs):
+            def timed_decode(encoded, *args, **kwargs):
                 t = time.perf_counter()
                 try:
-                    return original_decode(*args, **kwargs)
+                    trim = self._trim_codes
+                    if trim > 0 and isinstance(encoded, list):
+                        return self._decode_trimmed(original_decode, encoded, trim, *args, **kwargs)
+                    return original_decode(encoded, *args, **kwargs)
                 finally:
                     self._decode_s += time.perf_counter() - t
 
@@ -211,11 +239,19 @@ class QwenEngine:
             with self._lock:
                 torch.manual_seed(QWEN_SEED)
                 if ref_wav:
-                    wavs, sr = self._model.generate_voice_clone(
-                        text=chunk, language="German",
-                        voice_clone_prompt=self._clone_prompt(ref_wav, ref_txt),
-                        max_new_tokens=_qwen_token_budget(chunk),
-                    )
+                    prompt = self._clone_prompt(ref_wav, ref_txt)
+                    ref_code = getattr(prompt[0], "ref_code", None) if prompt else None
+                    keep = int(QWEN_REF_DECODE_S * QWEN_STEPS_PER_SECOND)
+                    if QWEN_REF_DECODE_S > 0 and ref_code is not None:
+                        self._trim_codes = max(0, int(ref_code.shape[0]) - keep)
+                    try:
+                        wavs, sr = self._model.generate_voice_clone(
+                            text=chunk, language="German",
+                            voice_clone_prompt=prompt,
+                            max_new_tokens=_qwen_token_budget(chunk),
+                        )
+                    finally:
+                        self._trim_codes = 0
                 else:
                     wavs, sr = self._model.generate_custom_voice(
                         text=chunk, language="German", speaker=speaker,
@@ -321,7 +357,7 @@ class TTS:
             ref_stamp = tuple(
                 os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
             )
-            key = (voice_key, ref_stamp, QWEN_SEED, text)
+            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, text)
             if key in self._qwen_cache:
                 self._qwen_cache.move_to_end(key)
                 samples = self._qwen_cache[key]
