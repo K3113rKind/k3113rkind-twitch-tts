@@ -228,6 +228,8 @@ class ChatSpeaker:
             "compute_s": round(result.compute_seconds, 2),
             "load_s": round(result.load_seconds, 2),
             "audio_s": round(result.duration_seconds, 2),
+            "cached": result.cached,
+            "decode_s": round(result.decode_seconds, 2),
             "rtf": round(result.compute_seconds / result.duration_seconds, 2)
             if result.duration_seconds else None,
         }

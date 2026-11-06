@@ -238,8 +238,14 @@ function fillVoices(voices) {
 const fmt = (n) => Number(n).toLocaleString("de-DE", { maximumFractionDigits: 2, minimumFractionDigits: 1 });
 function showPerf(p) {
   if (!p) return;
+  if (p.cached) {
+    el.perf.innerHTML = `Letzte Ausgabe: <b>aus dem Zwischenspeicher</b> (sofort) · ${fmt(p.audio_s)} s Audio`;
+    el.perf.append(" · " + p.voice);
+    return;
+  }
   let text = `Letzte Ausgabe: <b>${fmt(p.compute_s)} s</b> Rechenzeit für ${fmt(p.audio_s)} s Audio`;
   if (p.rtf != null) text += ` · RTF ${fmt(p.rtf)}`;
+  if (p.decode_s >= 0.1) text += ` · davon Klang-Decoder ${fmt(p.decode_s)} s`;
   if (p.load_s >= 1) text += ` · + ${fmt(p.load_s)} s Modell laden`;
   el.perf.innerHTML = text;
   el.perf.append(" · " + p.voice);

@@ -34,15 +34,18 @@ class SynthesisResult:
     Audio-Stream (stream.py)."""
 
     __slots__ = ("samples", "duration_seconds", "sample_rate", "compute_seconds",
-                 "load_seconds")
+                 "load_seconds", "cached", "decode_seconds")
 
     def __init__(self, samples, duration_seconds: float, sample_rate: int,
-                 compute_seconds: float = 0.0, load_seconds: float = 0.0):
+                 compute_seconds: float = 0.0, load_seconds: float = 0.0,
+                 cached: bool = False, decode_seconds: float = 0.0):
         self.samples = samples
         self.duration_seconds = duration_seconds
         self.sample_rate = sample_rate
         self.compute_seconds = compute_seconds  # reine Sprachberechnung
         self.load_seconds = load_seconds        # Modell laden (nur beim ersten Mal)
+        self.cached = cached                    # aus dem Zwischenspeicher, nicht neu berechnet
+        self.decode_seconds = decode_seconds    # davon Klangerzeugung (Qwen-Decoder)
 
 
 def _resample(samples, sr_in: int, sr_out: int):
@@ -107,6 +110,17 @@ def _split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
+# Qwen würfelt bei jeder Erzeugung (Sampling, Temperatur 0.9) – derselbe Satz
+# klang deshalb jedes Mal anders betont. Mit festem Startwert vor jedem Satz
+# ist das Ergebnis für denselben Text und dieselbe Stimme immer gleich;
+# verschiedene Sätze klingen trotzdem natürlich unterschiedlich.
+QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
+
+# Fertige Qwen-Ausgaben merken: Ein wiederholter Text (Testsatz, "Hallo")
+# kommt dann sofort statt nach 10–20 s Rechenzeit.
+QWEN_CACHE_SIZE = 64
+
+
 class QwenEngine:
     """Qwen3-TTS auf CPU – Preset-Stimmen (CustomVoice-Modelle) und eigene
     Stimmen (Base-Modelle mit Referenzaufnahme). Hält nur ein Modell im RAM –
@@ -126,6 +140,8 @@ class QwenEngine:
         self._lock = threading.Lock()
         # Vorberechnete Referenzen fürs Klonen: (Modell, wav, Änderungszeit)
         self._clone_prompts: dict[tuple, object] = {}
+        self._decode_s = 0.0
+        self.last_decode_s = 0.0
 
     def load(self, repo_id: str) -> None:
         with self._lock:
@@ -151,6 +167,18 @@ class QwenEngine:
             model = Qwen3TTSModel.from_pretrained(
                 str(snapshot), device_map="cpu", dtype=torch.float32
             )
+            # Zeit des Klang-Decoders mitmessen (Diagnose: Anteil an der Rechenzeit)
+            tokenizer = model.model.speech_tokenizer
+            original_decode = tokenizer.decode
+
+            def timed_decode(*args, **kwargs):
+                t = time.perf_counter()
+                try:
+                    return original_decode(*args, **kwargs)
+                finally:
+                    self._decode_s += time.perf_counter() - t
+
+            tokenizer.decode = timed_decode
             self._model = model
             self._repo = repo_id
 
@@ -171,14 +199,17 @@ class QwenEngine:
     def synthesize(self, text: str, repo_id: str, speaker: str | None = None,
                    ref_wav: str | None = None, ref_txt: str | None = None):
         import numpy as np
+        import torch
 
         self.load(repo_id)
         chunks = _split_for_qwen(text)
         parts = []
+        self._decode_s = 0.0
         t0 = time.perf_counter()
         label = speaker or (ref_wav and ref_wav.rsplit("/", 1)[-1].removesuffix(".wav"))
         for i, chunk in enumerate(chunks, 1):
             with self._lock:
+                torch.manual_seed(QWEN_SEED)
                 if ref_wav:
                     wavs, sr = self._model.generate_voice_clone(
                         text=chunk, language="German",
@@ -203,10 +234,12 @@ class QwenEngine:
         took = time.perf_counter() - t0
         samples = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
         dur = len(samples) / SAMPLE_RATE
+        self.last_decode_s = self._decode_s
         log.info(
-            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Abschnitt%s)",
+            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Abschnitt%s), "
+            "davon Klang-Decoder %.1f s",
             repo_id.split("-12Hz-")[-1], label, took, dur, took / dur if dur else 0.0,
-            len(chunks), "" if len(chunks) == 1 else "e",
+            len(chunks), "" if len(chunks) == 1 else "e", self._decode_s,
         )
         return samples
 
@@ -220,6 +253,9 @@ class TTS:
         self._lock = threading.Lock()
         self._ready = False
         self._qwen = QwenEngine()
+        from collections import OrderedDict
+
+        self._qwen_cache: OrderedDict = OrderedDict()
 
     def is_ready(self) -> bool:
         return self._ready
@@ -279,6 +315,20 @@ class TTS:
         spec = voices_mod.VOICES[voice_key]
         if voices_mod.is_qwen(voice_key):
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
+            # Cache-Schlüssel enthält bei eigenen Stimmen die Änderungszeit der
+            # Referenz – wird sie neu erzeugt oder der Text korrigiert, gilt der
+            # alte Eintrag nicht mehr.
+            ref_stamp = tuple(
+                os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
+            )
+            key = (voice_key, ref_stamp, QWEN_SEED, text)
+            if key in self._qwen_cache:
+                self._qwen_cache.move_to_end(key)
+                samples = self._qwen_cache[key]
+                return SynthesisResult(
+                    samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+                    sample_rate=SAMPLE_RATE, cached=True,
+                )
             t_load = time.perf_counter()
             self.load(voice_key)
             t0 = time.perf_counter()
@@ -288,12 +338,16 @@ class TTS:
             )
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")
+            self._qwen_cache[key] = samples
+            while len(self._qwen_cache) > QWEN_CACHE_SIZE:
+                self._qwen_cache.popitem(last=False)
             return SynthesisResult(
                 samples=samples,
                 duration_seconds=len(samples) / SAMPLE_RATE,
                 sample_rate=SAMPLE_RATE,
                 compute_seconds=time.perf_counter() - t0,
                 load_seconds=t0 - t_load,
+                decode_seconds=self._qwen.last_decode_s,
             )
 
         t_load = time.perf_counter()
