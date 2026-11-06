@@ -6,14 +6,14 @@ set -euo pipefail
 
 WORK=/root/qwen-test
 THREADS="${THREADS:-16}"
-mkdir -p "$WORK/out" "$WORK/hf" "$WORK/pip"
+mkdir -p "$WORK/out" "$WORK/hf" "$WORK/pip" "$WORK/ref"
 curl -fsSL -o "$WORK/bench.py" \
   https://raw.githubusercontent.com/K3113rKind/k3113rkind-twitch-tts/qwen3-test/tools/qwen3-test/bench.py
 
 # Torch/Torchaudio zuerst als reine CPU-Wheels (sonst zieht qwen-tts die
 # mehrere GB großen CUDA-Varianten). sox wird von qwen-tts benötigt.
 docker run --rm -it --name qwen3-test \
-  -e THREADS="$THREADS" -e SPEAKERS -e MODELS \
+  -e THREADS="$THREADS" -e SPEAKERS -e MODELS -e BASE_MODELS \
   -v "$WORK":/work -v "$WORK/hf":/root/.cache/huggingface -v "$WORK/pip":/root/.cache/pip \
   python:3.12-slim bash -c '
     set -e
