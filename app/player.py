@@ -22,7 +22,7 @@ from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
-from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_available, is_qwen
+from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_available, is_chunked, is_pocket, is_qwen
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
@@ -241,7 +241,7 @@ class ChatSpeaker:
         # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist
         # schnell genug und bekommt den Text am Stück.
         chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
-                  if is_qwen(voice) else [text])
+                  if is_chunked(voice) else [text])
         chunks = chunks or [text]
         speed = cfg["speed"]
         temperature = cfg["qwen_temperature"]
@@ -343,7 +343,8 @@ class ChatSpeaker:
             "load_s": round(totals["load"], 2),
             "audio_s": round(audio, 2),
             "cached": cached,
-            "device": self.tts.qwen_device if is_qwen(voice) else None,
+            "device": (self.tts.qwen_device if is_qwen(voice)
+                       else "CPU" if is_pocket(voice) else None),
             "decode_s": round(totals["decode"], 2),
             "first_s": round(first_audio_s, 2) if first_audio_s is not None else None,
             "rtf": round(totals["compute"] / audio, 2) if audio else None,

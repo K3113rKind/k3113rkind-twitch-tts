@@ -30,3 +30,7 @@ services:
       # Eigene Stimmen: neu erzeugen, wenn das Ergebnis nicht nach der Vorlage
       # klingt (Ähnlichkeit 0–1, 0 = Prüfung aus)
       - QWEN_SPK_MIN=${QWEN_SPK_MIN:-0.75}
+      # Pocket TTS: Torch-Threads während der Berechnung (klein = oft schneller)
+      - POCKET_THREADS=${POCKET_THREADS:-2}
+      # Hugging-Face-Token, nur für Pocket-TTS-Stimmklonen (Modell ist "gated")
+      - HF_TOKEN=${HF_TOKEN:-}

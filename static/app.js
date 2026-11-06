@@ -243,6 +243,7 @@ function fillVoices(voices) {
     opt.dataset.defaultLabel = v.default_label || v.label;
     opt.dataset.qwen = v.qwen ? "1" : "";
     opt.dataset.styleable = v.styleable ? "1" : "";
+    opt.dataset.pocket = v.pocket ? "1" : "";
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
@@ -257,9 +258,12 @@ function updateTemperatureRow() {
   el.styleCustom.classList.toggle("hidden", el.style.value !== "eigen");
   // Qwen: Tempo nur grob per Anweisung (Presets), Klone sprechen im Tempo der Referenz
   const qwen = !!(opt && opt.dataset.qwen), styleable = !!(opt && opt.dataset.styleable);
-  el.speed.disabled = qwen && !styleable;
-  el.speedNote.classList.toggle("hidden", !qwen);
-  el.speedNote.textContent = !qwen ? "" : styleable
+  const pocket = !!(opt && opt.dataset.pocket);
+  el.speed.disabled = (qwen && !styleable) || pocket;
+  el.speedNote.classList.toggle("hidden", !qwen && !pocket);
+  el.speedNote.textContent = pocket
+    ? "Pocket TTS: kein Tempo-Regler, Tempo kommt aus der Stimme"
+    : !qwen ? "" : styleable
     ? "Qwen: wirkt grob als Anweisung (langsamer/schneller), nicht exakt"
     : "Eigene Stimme: Tempo kommt aus der Referenzaufnahme";
 }

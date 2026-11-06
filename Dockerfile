@@ -45,6 +45,13 @@ RUN pip install --no-cache-dir python-multipart demucs faster-whisper "yt-dlp[de
     && chmod +x /usr/local/bin/deno && deno --version | head -1 \
     && python -c "import torch, demucs, faster_whisper; print('Torch nach Klon-Werkzeugen:', torch.__version__)"
 
+# Pocket TTS (Kyutai): kleines CPU-Modell mit Deutsch und Stimmklonen.
+# Eigene Schicht nach Torch; prüft, dass Torch nicht ausgetauscht wurde.
+RUN TORCH_BEFORE=$(python -c "import torch; print(torch.__version__)") \
+    && pip install --no-cache-dir pocket-tts --extra-index-url "$TORCH_INDEX" \
+    && python -c "import torch, sys; v=torch.__version__; print('Torch nach Pocket TTS:', v); sys.exit(v != '$TORCH_BEFORE')" \
+    && python -c "import pocket_tts; print('pocket-tts', __import__('importlib.metadata').metadata.version('pocket-tts'))"
+
 COPY app ./app
 COPY static ./static
 

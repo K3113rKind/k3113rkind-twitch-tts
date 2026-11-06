@@ -23,7 +23,7 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import (DEFAULT_VOICE, QWEN_BASE_MODELS, available_voices, is_available,
+from .voices import (DEFAULT_VOICE, available_voices, clone_keys, is_available,
                      ref_dir, sync_clone_voices)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -384,7 +384,7 @@ async def clone_delete(name: str):
         raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
     if clone_job.get("running") and clone_job.get("name") == name:
         raise HTTPException(409, "Diese Stimme wird gerade erstellt.")
-    keys = {f"klon-{size}-{name}" for size in QWEN_BASE_MODELS}
+    keys = clone_keys(name)
     changes = {}
     if config.get("voice") in keys:
         changes["voice"] = DEFAULT_VOICE

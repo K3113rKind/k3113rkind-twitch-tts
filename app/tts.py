@@ -505,6 +505,9 @@ class TTS:
         self._lock = threading.Lock()
         self._ready = False
         self._qwen = QwenEngine()
+        from .pocket import PocketEngine
+
+        self._pocket = PocketEngine()
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
@@ -515,9 +518,10 @@ class TTS:
     def forget_clone(self, name: str) -> None:
         """Nach dem Löschen einer eigenen Stimme: vorberechnete Referenz und
         zwischengespeicherte Sätze aus dem RAM werfen."""
-        keys = {f"klon-{size}-{name}" for size in voices_mod.QWEN_BASE_MODELS}
+        keys = voices_mod.clone_keys(name)
         for key in [k for k in list(self._qwen_cache) if k[0] in keys]:
             self._qwen_cache.pop(key, None)
+        self._pocket.forget(str(voices_mod.ref_dir() / f"{name}.wav"))
         prompts = self._qwen._clone_prompts
         for key in [k for k in prompts if Path(k[1]).stem == name]:
             prompts.pop(key, None)
@@ -564,6 +568,12 @@ class TTS:
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
+        if voices_mod.is_pocket(voice_key):
+            if not voices_mod.is_available(voice_key):
+                raise FileNotFoundError("Pocket TTS ist nicht installiert (Paket pocket-tts).")
+            self._pocket.load(spec["language"])
+            self._ready = True
+            return
         if voices_mod.is_qwen(voice_key):
             if not voices_mod.is_available(voice_key):
                 raise FileNotFoundError(
@@ -616,6 +626,22 @@ class TTS:
             voice_key = voices_mod.DEFAULT_VOICE
 
         spec = voices_mod.VOICES[voice_key]
+        if voices_mod.is_pocket(voice_key):
+            t_load = time.perf_counter()
+            self.load(voice_key)
+            t0 = time.perf_counter()
+            samples, sr = self._pocket.synthesize(text, spec["language"], spec.get("voice"),
+                                                  spec.get("ref_wav"))
+            samples = _resample(samples, sr, SAMPLE_RATE)
+            if len(samples) == 0:
+                raise ValueError("Kein Audio erzeugt.")
+            return SynthesisResult(
+                samples=samples,
+                duration_seconds=len(samples) / SAMPLE_RATE,
+                sample_rate=SAMPLE_RATE,
+                compute_seconds=time.perf_counter() - t0,
+                load_seconds=t0 - t_load,
+            )
         if voices_mod.is_qwen(voice_key):
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
             # Cache-Schlüssel enthält bei eigenen Stimmen die Änderungszeit der

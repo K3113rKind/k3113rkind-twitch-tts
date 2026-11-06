@@ -80,6 +80,31 @@ QWEN_BASE_MODELS = {
 }
 CLONE_ENGINE = "qwen-clone"
 
+# --- Pocket TTS (Kyutai, Test) -----------------------------------------------
+# Kleines CPU-Modell (100M). "german" = schnell, "german_24l" = 24 Schichten,
+# bessere Qualität, langsamer. Gewichte lädt app/pocket.py beim ersten Gebrauch.
+POCKET_ENGINE = "pocket"
+POCKET_CLONE_ENGINE = "pocket-clone"
+POCKET_MODELS = {
+    "pocket": ("german", "Pocket"),
+    "pocket24": ("german_24l", "Pocket 24L"),
+}
+for _key, (_lang, _name) in POCKET_MODELS.items():
+    VOICES[f"{_key}-juergen"] = {
+        "label": f"{_name} · Jürgen – Deutsch, männlich (Test)",
+        "engine": POCKET_ENGINE,
+        "language": _lang,
+        "voice": "juergen",
+        "lang": "d",
+    }
+
+# Schlüssel-Präfixe einer eigenen Stimme NAME: klon-<präfix>-NAME
+CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS]
+
+
+def clone_keys(name: str) -> set[str]:
+    return {f"klon-{prefix}-{name}" for prefix in CLONE_PREFIXES}
+
 
 def ref_dir() -> Path:
     return Path(os.environ.get("QWEN_REF_PATH", "/ref"))
@@ -103,7 +128,16 @@ def sync_clone_voices() -> None:
                     "ref_txt": str(txt),
                     "lang": "d",
                 }
-    for key in [k for k, v in list(VOICES.items()) if v.get("engine") == CLONE_ENGINE]:
+            for key, (lang, model_name) in POCKET_MODELS.items():
+                wanted[f"klon-{key}-{wav.stem}"] = {
+                    "label": f"{wav.stem} · eigene Stimme, {model_name} – Deutsch (Test)",
+                    "engine": POCKET_CLONE_ENGINE,
+                    "language": lang,
+                    "ref_wav": str(wav),
+                    "lang": "d",
+                }
+    for key in [k for k, v in list(VOICES.items())
+                if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE)]:
         if key not in wanted:
             VOICES.pop(key, None)
     VOICES.update(wanted)
@@ -182,12 +216,25 @@ def is_qwen(voice_key: str) -> bool:
     return engine(voice_key) in ("qwen", CLONE_ENGINE)
 
 
+def is_pocket(voice_key: str) -> bool:
+    return engine(voice_key) in (POCKET_ENGINE, POCKET_CLONE_ENGINE)
+
+
+def is_chunked(voice_key: str) -> bool:
+    """Lange Texte abschnittsweise erzeugen und schon während der Berechnung spielen."""
+    return is_qwen(voice_key) or is_pocket(voice_key)
+
+
 def is_available(voice_key: str) -> bool:
     """Alle Dateien vorhanden, die diese Stimme braucht?"""
     if voice_key.startswith("klon-"):
         sync_clone_voices()
     if voice_key not in VOICES:
         return False
+    if is_pocket(voice_key):
+        spec = VOICES[voice_key]
+        return (importlib.util.find_spec("pocket_tts") is not None
+                and ("ref_wav" not in spec or Path(spec["ref_wav"]).is_file()))
     if is_qwen(voice_key):
         spec = VOICES[voice_key]
         return (
@@ -215,7 +262,8 @@ def available_voices(custom: dict | None = None) -> list[dict]:
     sync_clone_voices()
     return [
         {"key": key, "label": display_name(key, custom), "default_label": data["label"],
-         "qwen": is_qwen(key), "styleable": data.get("engine") == "qwen"}
+         "qwen": is_qwen(key), "styleable": data.get("engine") == "qwen",
+         "pocket": is_pocket(key)}
         for key, data in list(VOICES.items())
         if is_available(key)
     ]
