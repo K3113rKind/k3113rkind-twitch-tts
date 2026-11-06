@@ -58,7 +58,7 @@ async def _ensure_loaded(voice: str) -> None:
     state["loading"] = True
     state["error"] = None
     try:
-        await asyncio.to_thread(tts.load, voice, config.get("qwen_int8"))
+        await asyncio.to_thread(tts.load, voice)
     except Exception as exc:
         state["error"] = str(exc)
         raise

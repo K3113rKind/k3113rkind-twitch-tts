@@ -18,6 +18,5 @@ services:
     environment:
       - TZ=Europe/Berlin
       - HF_HOME=/hf
-      # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren
-      # Kerne. int8 wird in der GUI geschaltet.
+      # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren Kerne
       - QWEN_THREADS=${QWEN_THREADS:-0}

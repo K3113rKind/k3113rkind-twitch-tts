@@ -124,7 +124,7 @@ def is_available(voice_key: str) -> bool:
 def available_voices() -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
     return [
-        {"key": key, "label": data["label"], "engine": data.get("engine", "kokoro")}
+        {"key": key, "label": data["label"]}
         for key, data in VOICES.items()
         if is_available(key)
     ]

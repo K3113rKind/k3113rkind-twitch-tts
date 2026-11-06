@@ -222,13 +222,9 @@ class ChatSpeaker:
         await self.broadcaster.send(
             {"type": "generating", "username": msg.username, "text": msg.text}
         )
-        int8 = bool(cfg["qwen_int8"]) and VOICES[voice].get("engine") == "qwen"
-        result = await asyncio.to_thread(
-            self.tts.synthesize, text, voice, cfg["speed"], cfg["qwen_int8"]
-        )
+        result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
         self.last_perf = {
             "voice": VOICES[voice]["label"].split(" – ")[0],
-            "int8": int8,
             "compute_s": round(result.compute_seconds, 2),
             "load_s": round(result.load_seconds, 2),
             "audio_s": round(result.duration_seconds, 2),

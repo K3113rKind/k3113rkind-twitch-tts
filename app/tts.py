@@ -58,8 +58,8 @@ def _resample(samples, sr_in: int, sr_out: int):
 
 # Qwen erzeugt 12,5 Audio-Schritte pro Sekunde und hört erst auf, wenn es
 # das Satzende selbst erkennt – sonst bis 2048 Schritte (~2,7 min Audio,
-# auf CPU über 10 min Rechenzeit). Passiert z. B., wenn int8 das Modell zu
-# ungenau macht. Obergrenze: sehr langsames Sprechtempo (6 Zeichen/s) plus
+# auf CPU über 10 min Rechenzeit). Passierte z. B. mit int8-Quantisierung (verworfen).
+# Obergrenze: sehr langsames Sprechtempo (6 Zeichen/s) plus
 # 5 s Puffer – normale Sätze erreichen sie nie.
 QWEN_STEPS_PER_SECOND = 12.5
 
@@ -73,23 +73,22 @@ class QwenEngine:
     """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
     Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
 
-    Stellschrauben:
-      QWEN_THREADS  (Umgebungsvariable, .env) Anzahl Torch-Threads; 0 = alle
-                    sichtbaren Kerne. Oft schneller: nur echte Kerne eines
-                    CPU-Sockels statt Hyper-Threads über beide Sockel verteilt.
-      int8          (Schalter in der GUI) Sprachmodell (Talker) dynamisch auf
-                    int8 quantisieren. Experimentell: meist schneller auf CPU,
-                    Klang kann leiden. Umschalten lädt das Modell neu.
+    Stellschraube QWEN_THREADS (Umgebungsvariable, .env): Anzahl
+    Torch-Threads; 0 = alle sichtbaren Kerne. Oft schneller: nur echte Kerne
+    eines CPU-Sockels statt Hyper-Threads über beide Sockel verteilt.
+
+    int8-Quantisierung wurde getestet und verworfen: Auf dem Xeon Gold 6150
+    (Skylake, ohne VNNI) fand das Modell damit das Satzende nicht mehr.
     """
 
     def __init__(self) -> None:
-        self._loaded: tuple[str, bool] | None = None  # (Modell, int8)
+        self._repo: str | None = None
         self._model = None
         self._lock = threading.Lock()
 
-    def load(self, repo_id: str, int8: bool = False) -> None:
+    def load(self, repo_id: str) -> None:
         with self._lock:
-            if self._loaded == (repo_id, int8):
+            if self._repo == repo_id:
                 return
             snapshot = voices_mod.hf_snapshot(repo_id)
             if snapshot is None:
@@ -106,22 +105,15 @@ class QwenEngine:
             threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
             if threads > 0:
                 torch.set_num_threads(threads)
-            log.info(
-                "Lade Qwen3-TTS: %s (%d Threads, int8 %s)",
-                repo_id, torch.get_num_threads(), "an" if int8 else "aus",
-            )
+            log.info("Lade Qwen3-TTS: %s (%d Threads)", repo_id, torch.get_num_threads())
             model = Qwen3TTSModel.from_pretrained(
                 str(snapshot), device_map="cpu", dtype=torch.float32
             )
-            if int8:
-                model.model.talker = torch.ao.quantization.quantize_dynamic(
-                    model.model.talker, {torch.nn.Linear}, dtype=torch.qint8
-                )
             self._model = model
-            self._loaded = (repo_id, int8)
+            self._repo = repo_id
 
-    def synthesize(self, text: str, repo_id: str, speaker: str, int8: bool = False):
-        self.load(repo_id, int8)
+    def synthesize(self, text: str, repo_id: str, speaker: str):
+        self.load(repo_id)
         with self._lock:
             t0 = time.perf_counter()
             wavs, sr = self._model.generate_custom_voice(
@@ -134,12 +126,11 @@ class QwenEngine:
         if dur >= budget_s - 0.5:
             log.warning(
                 "Qwen hat das Satzende nicht gefunden und wurde nach %.0f s Audio "
-                "abgeschnitten (bei int8: Genauigkeit vermutlich zu gering).", dur,
+                "abgeschnitten.", dur,
             )
         log.info(
-            "Qwen %s/%s%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
-            repo_id.split("-12Hz-")[-1], speaker, " int8" if int8 else "",
-            took, dur, took / dur if dur else 0.0,
+            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
+            repo_id.split("-12Hz-")[-1], speaker, took, dur, took / dur if dur else 0.0,
         )
         return _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
 
@@ -157,7 +148,7 @@ class TTS:
     def is_ready(self) -> bool:
         return self._ready
 
-    def load(self, voice_key: str, qwen_int8: bool = False) -> None:
+    def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
         if voices_mod.engine(voice_key) == "qwen":
@@ -165,7 +156,7 @@ class TTS:
                 raise FileNotFoundError(
                     f"Für die Stimme '{spec['label']}' fehlt das Qwen-Modell oder das Paket qwen-tts."
                 )
-            self._qwen.load(spec["model"], qwen_int8)
+            self._qwen.load(spec["model"])
             self._ready = True
             return
 
@@ -203,8 +194,7 @@ class TTS:
 
         self._ready = True
 
-    def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
-                   qwen_int8: bool = False) -> SynthesisResult:
+    def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
         if voice_key not in voices_mod.VOICES:
             voice_key = voices_mod.DEFAULT_VOICE
 
@@ -212,9 +202,9 @@ class TTS:
         if voices_mod.engine(voice_key) == "qwen":
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
             t_load = time.perf_counter()
-            self.load(voice_key, qwen_int8)
+            self.load(voice_key)
             t0 = time.perf_counter()
-            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"], qwen_int8)
+            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"])
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")
             return SynthesisResult(
