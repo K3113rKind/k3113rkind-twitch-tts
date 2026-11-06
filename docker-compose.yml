@@ -23,5 +23,7 @@ services:
       - HF_HOME=/hf
       # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren Kerne
       - QWEN_THREADS=${QWEN_THREADS:-0}
-      # Füllzeichen hinter dem Satzende gegen verschluckte letzte Laute (0 = aus)
-      - QWEN_END_FIX=${QWEN_END_FIX:-1}
+      # Füllzeichen hinter dem Satzende gegen verschluckte letzte Laute (1 = an)
+      - QWEN_END_FIX=${QWEN_END_FIX:-0}
+      # Eigene Stimmen schneller, aber ungenauer (nur Stimm-Fingerabdruck, 1 = an)
+      - QWEN_CLONE_FAST=${QWEN_CLONE_FAST:-0}

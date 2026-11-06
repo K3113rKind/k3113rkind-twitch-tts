@@ -167,11 +167,11 @@ def _take_head(text: str, limit: int) -> tuple[str, str]:
 # klang deshalb jedes Mal anders betont. Mit festem Startwert vor jedem Satz
 # ist das Ergebnis für denselben Text und dieselbe Stimme immer gleich;
 # verschiedene Sätze klingen trotzdem natürlich unterschiedlich.
-# Qwen verschluckt am Ende gern den letzten Laut. Bekannter Kniff aus der
-# Qwen3-TTS-Community: hinter das Satzende ein Füllzeichen hängen, das nicht
-# gesprochen wird – das Modell spricht dann das letzte Wort zu Ende.
-# QWEN_END_FIX=0 schaltet das ab.
-QWEN_END_FIX = os.environ.get("QWEN_END_FIX", "1").strip() not in ("0", "false", "no", "")
+# Qwen verschluckt am Ende gern den letzten Laut. Kniff aus der
+# Qwen3-TTS-Community: Füllzeichen hinter das Satzende. Auf Deutsch erzeugt
+# das aber gelegentlich Fantasie-Silben ("plili") -> standardmäßig aus,
+# QWEN_END_FIX=1 schaltet es ein.
+QWEN_END_FIX = os.environ.get("QWEN_END_FIX", "0").strip() not in ("0", "false", "no", "")
 QWEN_END_TAIL = " ^."
 
 
@@ -183,6 +183,11 @@ def _qwen_text(chunk: str) -> str:
         chunk += "."
     return chunk + QWEN_END_TAIL if QWEN_END_FIX else chunk
 
+
+# Schnelles Klonen: nur der Stimm-Fingerabdruck (x-vector) statt der ganzen
+# Referenzaufnahme als Kontext. Kürzerer Kontext -> schneller, aber die
+# Stimme trifft weniger genau. QWEN_CLONE_FAST=1 schaltet es ein.
+QWEN_CLONE_FAST = os.environ.get("QWEN_CLONE_FAST", "0").strip() in ("1", "true", "yes")
 
 QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
 
@@ -349,14 +354,16 @@ class QwenEngine:
         """Referenz einmal vorberechnen (spart das bei jedem Satz)."""
         from pathlib import Path
 
-        key = (self._repo, ref_wav, Path(ref_wav).stat().st_mtime, Path(ref_txt).stat().st_mtime)
+        key = (self._repo, ref_wav, Path(ref_wav).stat().st_mtime, Path(ref_txt).stat().st_mtime,
+               QWEN_CLONE_FAST)
         if key not in self._clone_prompts:
             text = Path(ref_txt).read_text(encoding="utf-8").strip()
             t0 = time.perf_counter()
             self._clone_prompts[key] = self._model.create_voice_clone_prompt(
-                ref_audio=ref_wav, ref_text=text, x_vector_only_mode=False
+                ref_audio=ref_wav, ref_text=text, x_vector_only_mode=QWEN_CLONE_FAST
             )
-            log.info("Referenz %s vorbereitet in %.1f s", Path(ref_wav).name, time.perf_counter() - t0)
+            log.info("Referenz %s vorbereitet in %.1f s%s", Path(ref_wav).name,
+                     time.perf_counter() - t0, " (schnell: nur Stimm-Fingerabdruck)" if QWEN_CLONE_FAST else "")
         return self._clone_prompts[key]
 
     def synthesize(self, text: str, repo_id: str, speaker: str | None = None,
