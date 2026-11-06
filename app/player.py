@@ -26,8 +26,9 @@ from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_av
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
-# Gruppenberechnung: längere Texte (Zeichen) laufen allein, nicht in einer Gruppe
-BATCH_LONG_CHARS = 110
+# Gruppenberechnung: Texte bis zu dieser Länge (Zeichen, inkl. Name) gelten
+# als kurz – sie werden bevorzugt und unter sich gerechnet.
+BATCH_SHORT_CHARS = 60
 
 log = logging.getLogger(__name__)
 
@@ -208,13 +209,41 @@ class ChatSpeaker:
                 self._queue_event.clear()
                 await self._queue_event.wait()
             self._maybe_prefetch()
-            msg = self._queue.popleft()
+            msg = self._pick_next()
+            if msg is None:
+                # Alles Wartende steckt in einer laufenden Gruppe -> auf sie warten
+                if self._batch_task and not self._batch_task.done():
+                    await asyncio.wait({self._batch_task})
+                continue
+            self._queue.remove(msg)
             await self._push_queue_state()
             try:
                 await self._speak(msg)
             except Exception as exc:
                 log.error("TTS für Nachricht von %s fehlgeschlagen: %s", msg.username, exc)
                 await self.broadcaster.send({"type": "error", "message": str(exc)})
+
+    def _pick_next(self) -> QueuedMessage | None:
+        """Welche Nachricht als Nächstes? Ohne Gruppenberechnung strikt der
+        Reihe nach. Mit Gruppen: die älteste, deren Audio schon fertig ist –
+        kurze Nachrichten überholen so lange, die noch rechnen."""
+        cfg = self.config.as_dict()
+        try:
+            voice = self._voice(cfg)
+        except RuntimeError:
+            return self._queue[0]
+        if cfg["qwen_batch"] <= 1 or not is_qwen(voice):
+            return self._queue[0]
+        _, temperature, instruct = self._gen_params(cfg)
+        for m in self._queue:
+            text = self._chunks(self._spoken_text(m, cfg, voice), voice)[0]
+            if self.tts.has_result(text, voice, temperature, instruct):
+                return m
+        if self._batch_task and not self._batch_task.done():
+            return None  # gleich ist etwas fertig
+        # Nichts fertig und keine Gruppe aktiv (z. B. Ergebnis verworfen):
+        # älteste Nachricht direkt rechnen
+        return self._queue[0]
 
     async def cancel_test(self) -> None:
         """Testtexte abbrechen: wartende aus der Queue nehmen, laufenden stoppen.
@@ -286,22 +315,27 @@ class ChatSpeaker:
         if not is_qwen(voice):
             return
         # Eine Gruppe dauert so lange wie ihre längste Nachricht (alle laufen
-        # im Gleichschritt, bis die letzte fertig ist). Deshalb nur ähnlich
-        # lange Nachrichten zusammenfassen; lange laufen allein.
+        # im Gleichschritt, bis die letzte fertig ist). Deshalb:
+        #  - kurze Nachrichten zuerst und unter sich -> schnell hörbar
+        #  - lange danach, nur mit ähnlich langen zusammen
+        # Die Wiedergabe nimmt jeweils die älteste fertige Nachricht, die
+        # Reihenfolge kann sich also ändern.
         candidates = []
         for m in self._queue:
             if not m.batched:
                 candidates.append((m, self._chunks(self._spoken_text(m, cfg, voice), voice)[0]))
         if not candidates:
             return
-        head_len = len(candidates[0][1])
-        picked = [candidates[0]]
-        if head_len <= BATCH_LONG_CHARS:
+        short = [c for c in candidates if len(c[1]) <= BATCH_SHORT_CHARS]
+        if short:
+            picked = short[:size]
+        else:
+            head_len = len(candidates[0][1])
+            picked = [candidates[0]]
             for m, text in candidates[1:]:
                 if len(picked) >= size:
                     break
-                if (len(text) <= BATCH_LONG_CHARS
-                        and abs(len(text) - head_len) <= max(25, 0.5 * max(len(text), head_len))):
+                if abs(len(text) - head_len) <= max(25, 0.4 * max(len(text), head_len)):
                     picked.append((m, text))
         texts = [text for _, text in picked]
         for m, _ in picked:

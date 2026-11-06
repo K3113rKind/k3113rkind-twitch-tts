@@ -601,6 +601,18 @@ class TTS:
             instruct = None  # nur Preset-Stimmen verstehen Anweisungen
         return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
 
+    def has_result(self, text: str, voice_key: str, temperature=None, instruct=None) -> bool:
+        """Liegt für diesen Text schon fertiges Audio bereit (Gruppe oder Cache)?"""
+        spec = voices_mod.VOICES.get(voice_key)
+        if spec is None or not voices_mod.is_qwen(voice_key):
+            return False
+        try:
+            key = self._qwen_key(voice_key, spec, temperature, instruct, text)
+        except OSError:
+            return False
+        with self._batch_lock:
+            return key in self._prefetched or key in self._qwen_cache
+
     def prefetch_batch(self, texts: list[str], voice_key: str,
                        temperature: float | None = None, instruct: str | None = None) -> int:
         """Mehrere Texte gemeinsam vorab berechnen (blockierend, im Thread
