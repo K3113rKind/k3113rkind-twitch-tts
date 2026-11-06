@@ -56,6 +56,19 @@ def _resample(samples, sr_in: int, sr_out: int):
     return np.interp(x_new, x_old, samples).astype(np.float32)
 
 
+# Qwen erzeugt 12,5 Audio-Schritte pro Sekunde und hört erst auf, wenn es
+# das Satzende selbst erkennt – sonst bis 2048 Schritte (~2,7 min Audio,
+# auf CPU über 10 min Rechenzeit). Passiert z. B., wenn int8 das Modell zu
+# ungenau macht. Obergrenze: sehr langsames Sprechtempo (6 Zeichen/s) plus
+# 5 s Puffer – normale Sätze erreichen sie nie.
+QWEN_STEPS_PER_SECOND = 12.5
+
+
+def _qwen_token_budget(text: str) -> int:
+    seconds = len(text) / 6 + 5
+    return min(2048, int(seconds * QWEN_STEPS_PER_SECOND))
+
+
 class QwenEngine:
     """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
     Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
@@ -112,10 +125,17 @@ class QwenEngine:
         with self._lock:
             t0 = time.perf_counter()
             wavs, sr = self._model.generate_custom_voice(
-                text=text, language="German", speaker=speaker
+                text=text, language="German", speaker=speaker,
+                max_new_tokens=_qwen_token_budget(text),
             )
             took = time.perf_counter() - t0
         dur = len(wavs[0]) / int(sr) if sr else 0.0
+        budget_s = _qwen_token_budget(text) / QWEN_STEPS_PER_SECOND
+        if dur >= budget_s - 0.5:
+            log.warning(
+                "Qwen hat das Satzende nicht gefunden und wurde nach %.0f s Audio "
+                "abgeschnitten (bei int8: Genauigkeit vermutlich zu gering).", dur,
+            )
         log.info(
             "Qwen %s/%s%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
             repo_id.split("-12Hz-")[-1], speaker, " int8" if int8 else "",
