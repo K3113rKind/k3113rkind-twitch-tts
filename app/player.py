@@ -393,6 +393,9 @@ class ChatSpeaker:
             if idx == 0:
                 first_audio_s = time.perf_counter() - t_start
                 totals["wait"] = time.monotonic() - msg.arrived
+                if not msg.raw:
+                    log.info("Wartezeit: %.1f s nach Eingang (%s, %d wartend)",
+                             totals["wait"], msg.username, len(self._queue))
                 self.last_perf = self._perf(cfg, voice, totals, all_cached, first_audio_s)
                 self._current_id += 1
                 utterance_id = self._current_id
