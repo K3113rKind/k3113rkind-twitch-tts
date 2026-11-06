@@ -215,6 +215,11 @@ class ChatSpeaker:
         else:
             text = msg.text
 
+        # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
+        # sonst sekundenlang kein Lebenszeichen in der GUI.
+        await self.broadcaster.send(
+            {"type": "generating", "username": msg.username, "text": msg.text}
+        )
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
 
         self._current_id += 1

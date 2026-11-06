@@ -100,6 +100,31 @@ function setMediaSession() {
 el.audioUnlock.addEventListener("click", startStream);
 updateUnlockButton();
 
+// Während die Sprache berechnet wird: Hinweis mit mitlaufenden Sekunden.
+let genTimer = null;
+function showGenerating(msg) {
+  stopGenerating();
+  const started = Date.now();
+  const render = () => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    el.now.innerHTML = "";
+    const label = document.createElement("span");
+    label.className = "gen";
+    label.textContent = `Erzeuge Sprache … ${s} s`;
+    const user = document.createElement("span");
+    user.className = "user";
+    user.textContent = msg.username;
+    el.now.append(label, document.createElement("br"), user,
+                  document.createTextNode(": " + msg.text));
+  };
+  render();
+  genTimer = setInterval(render, 1000);
+}
+function stopGenerating() {
+  clearInterval(genTimer);
+  genTimer = null;
+}
+
 function showNow(msg) {
   el.now.innerHTML = "";
   const user = document.createElement("span");
@@ -136,13 +161,18 @@ function connectWs() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     switch (msg.type) {
+      case "generating":
+        showGenerating(msg);
+        break;
       case "speak":
+        stopGenerating();
         speaking = true;
         updateSkipButton();
         showNow(msg);
         break;
       case "done":
       case "stop_audio":
+        stopGenerating();
         speaking = false;
         updateSkipButton();
         el.now.textContent = "–";
@@ -151,6 +181,8 @@ function connectWs() {
         applyStatus(msg);
         break;
       case "error":
+        stopGenerating();
+        el.now.textContent = "–";
         showError(msg.message);
         break;
     }

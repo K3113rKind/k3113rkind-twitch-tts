@@ -173,6 +173,7 @@ input[type="range"] {
   margin-bottom: 0.8rem;
 }
 .now .user { color: var(--accent); font-weight: 600; }
+.now .gen { color: var(--muted); font-style: italic; }
 
 
 .actions { display: flex; gap: 0.6rem; }
