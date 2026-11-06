@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -58,6 +59,19 @@ DEFAULTS: dict[str, Any] = {
         "fossabot",
     ],
 }
+
+
+_TWITCH_URL = re.compile(r"twitch\.tv/(?:(?:popout|moderator|embed)/)?([A-Za-z0-9_]{2,25})", re.I)
+
+
+def clean_channel(value) -> str:
+    """Kanalname aus Eingabe holen: auch ganze Links wie
+    https://www.twitch.tv/name, twitch.tv/popout/name/chat, @name oder #name."""
+    value = str(value or "").strip()
+    match = _TWITCH_URL.search(value)
+    if match:
+        value = match.group(1)
+    return value.lstrip("@#").strip().lower()
 
 
 class ConfigStore:
@@ -137,7 +151,7 @@ class ConfigStore:
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":
-                value = str(value).strip().lstrip("#").lower()
+                value = clean_channel(value)
             elif key == "username_style":
                 value = str(value).strip()
                 if value not in ("doppelpunkt", "sagt"):

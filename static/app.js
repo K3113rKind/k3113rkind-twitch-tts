@@ -288,7 +288,7 @@ let saveTimer = null;
 
 function collectConfig() {
   return {
-    channel: el.channel.value,
+    channel: cleanChannel(el.channel.value),
     voice: el.voice.value,
     volume: parseFloat(el.volume.value),
     speed: parseFloat(el.speed.value),
@@ -365,6 +365,16 @@ el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice
 el.style.addEventListener("change", () => { updateTemperatureRow(); saveConfig(); });
 el.styleCustom.addEventListener("change", saveConfig);
 
+// Ganzen Twitch-Link einfügen können: https://www.twitch.tv/name -> name
+function cleanChannel(v) {
+  v = (v || "").trim();
+  const m = v.match(/twitch\.tv\/(?:(?:popout|moderator|embed)\/)?([A-Za-z0-9_]{2,25})/i);
+  if (m) v = m[1];
+  return v.replace(/^[@#]+/, "").trim().toLowerCase();
+}
+el.channel.addEventListener("input", () => {
+  if (/twitch\.tv\/[A-Za-z0-9_]{2,}|^[@#]/i.test(el.channel.value)) el.channel.value = cleanChannel(el.channel.value);
+});
 el.channel.addEventListener("change", setMediaSession);
 for (const slider of [el.volume, el.speed, el.temperature]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
