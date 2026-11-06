@@ -38,6 +38,58 @@ class SynthesisResult:
         self.sample_rate = sample_rate
 
 
+def _resample(samples, sr_in: int, sr_out: int):
+    """Lineare Umrechnung – reicht für Sprache, vermeidet weitere Pakete."""
+    import numpy as np
+
+    if sr_in == sr_out or len(samples) == 0:
+        return samples
+    n_out = int(round(len(samples) * sr_out / sr_in))
+    x_old = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
+    x_new = np.linspace(0.0, 1.0, num=n_out, endpoint=False)
+    return np.interp(x_new, x_old, samples).astype(np.float32)
+
+
+class QwenEngine:
+    """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
+    Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben."""
+
+    def __init__(self) -> None:
+        self._repo: str | None = None
+        self._model = None
+        self._lock = threading.Lock()
+
+    def load(self, repo_id: str) -> None:
+        with self._lock:
+            if self._repo == repo_id:
+                return
+            snapshot = voices_mod.hf_snapshot(repo_id)
+            if snapshot is None:
+                raise FileNotFoundError(
+                    f"Qwen-Modell {repo_id} nicht im Hugging-Face-Cache gefunden (HF_HOME)."
+                )
+            import gc
+
+            import torch
+            from qwen_tts import Qwen3TTSModel
+
+            self._model = None
+            gc.collect()
+            log.info("Lade Qwen3-TTS: %s (%d Threads)", repo_id, torch.get_num_threads())
+            self._model = Qwen3TTSModel.from_pretrained(
+                str(snapshot), device_map="cpu", dtype=torch.float32
+            )
+            self._repo = repo_id
+
+    def synthesize(self, text: str, repo_id: str, speaker: str):
+        self.load(repo_id)
+        with self._lock:
+            wavs, sr = self._model.generate_custom_voice(
+                text=text, language="German", speaker=speaker
+            )
+        return _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
+
+
 class TTS:
     def __init__(self) -> None:
         # Pipelines pro (Backbone, Sprache) – Laden kostet Zeit/RAM,
@@ -46,6 +98,7 @@ class TTS:
         self._packs: dict[str, object] = {}
         self._lock = threading.Lock()
         self._ready = False
+        self._qwen = QwenEngine()
 
     def is_ready(self) -> bool:
         return self._ready
@@ -53,6 +106,15 @@ class TTS:
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
+        if voices_mod.engine(voice_key) == "qwen":
+            if not voices_mod.is_available(voice_key):
+                raise FileNotFoundError(
+                    f"Für die Stimme '{spec['label']}' fehlt das Qwen-Modell oder das Paket qwen-tts."
+                )
+            self._qwen.load(spec["model"])
+            self._ready = True
+            return
+
         cache_key = (spec["backbone"], spec["lang"])
 
         with self._lock:
@@ -92,6 +154,17 @@ class TTS:
             voice_key = voices_mod.DEFAULT_VOICE
 
         spec = voices_mod.VOICES[voice_key]
+        if voices_mod.engine(voice_key) == "qwen":
+            # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
+            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"])
+            if len(samples) == 0:
+                raise ValueError("Kein Audio erzeugt.")
+            return SynthesisResult(
+                samples=samples,
+                duration_seconds=len(samples) / SAMPLE_RATE,
+                sample_rate=SAMPLE_RATE,
+            )
+
         cache_key = (spec["backbone"], spec["lang"])
         if cache_key not in self._pipelines or voice_key not in self._packs:
             self.load(voice_key)

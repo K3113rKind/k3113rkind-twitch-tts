@@ -3,7 +3,7 @@ FROM python:3.12-slim
 # espeak-ng: Lautschrift-Umwandlung; libsndfile1: WAV-Erzeugung
 # git: kokoro/misaki werden aus Git-Repos installiert (siehe requirements.txt)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends espeak-ng libsndfile1 git \
+    && apt-get install -y --no-install-recommends espeak-ng libsndfile1 git sox \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/app
@@ -11,8 +11,10 @@ WORKDIR /srv/app
 # Torch zuerst als reines CPU-Wheel, damit requirements.txt (kokoro -> torch)
 # nicht die CUDA-Variante nachzieht.
 COPY requirements.txt .
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir qwen-tts --extra-index-url https://download.pytorch.org/whl/cpu \
+    && python -c "import torch; assert not torch.version.cuda, 'CUDA-Torch im Image'"
 
 COPY app ./app
 COPY static ./static
