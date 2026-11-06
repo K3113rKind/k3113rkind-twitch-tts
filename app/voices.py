@@ -124,6 +124,25 @@ QWEN_STYLES = {
     "streng": "Speak in a strict, cold and commanding tone.",
 }
 
+
+
+def speed_instruct(instruct: str | None, speed: float) -> str | None:
+    """Sprechtempo als Anweisung an die Qwen-Preset-Stimmen anhängen.
+    Wirkt nur bei CustomVoice (Klone ignorieren instruct); Kokoro nutzt speed direkt."""
+    speed = float(speed or 1.0)
+    if speed <= 0.7:
+        hint = "Speak very slowly, with a relaxed pace and clear pauses."
+    elif speed <= 0.9:
+        hint = "Speak a bit slower than usual, at a calm pace."
+    elif speed >= 1.4:
+        hint = "Speak very fast."
+    elif speed >= 1.1:
+        hint = "Speak a bit faster than usual."
+    else:
+        return instruct
+    return f"{instruct} {hint}" if instruct else hint
+
+
 DEFAULT_VOICE = "victoria"
 
 

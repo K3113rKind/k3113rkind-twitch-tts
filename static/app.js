@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   channel: $("channel"), voice: $("voice"),
   volume: $("volume"), volumeVal: $("volume-val"),
-  speed: $("speed"), speedVal: $("speed-val"),
+  speed: $("speed"), speedVal: $("speed-val"), speedNote: $("speed-note"),
   readUser: $("read_username"), readEmotes: $("read_emotes"),
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
@@ -254,6 +254,13 @@ function updateTemperatureRow() {
   el.temperatureRow.classList.toggle("hidden", !(opt && opt.dataset.qwen));
   el.styleRow.classList.toggle("hidden", !(opt && opt.dataset.styleable));
   el.styleCustom.classList.toggle("hidden", el.style.value !== "eigen");
+  // Qwen: Tempo nur grob per Anweisung (Presets), Klone sprechen im Tempo der Referenz
+  const qwen = !!(opt && opt.dataset.qwen), styleable = !!(opt && opt.dataset.styleable);
+  el.speed.disabled = qwen && !styleable;
+  el.speedNote.classList.toggle("hidden", !qwen);
+  el.speedNote.textContent = !qwen ? "" : styleable
+    ? "Qwen: wirkt grob als Anweisung (langsamer/schneller), nicht exakt"
+    : "Eigene Stimme: Tempo kommt aus der Referenzaufnahme";
 }
 
 // Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
