@@ -9,8 +9,10 @@ Rechenleistung) – ein Prozess lastet 18 Kerne nicht aus. Getrennte Prozesse
 umgehen außerdem die Python-Sperre (GIL), die Threads im selben Prozess
 ausbremsen würde.
 
-Jede Anfrage geht an einen freien Prozess. Threads werden beim Start einer
-Anfrage nach Last verteilt: allein alle QWEN_THREADS, sonst anteilig.
+Jede Anfrage geht an einen freien Prozess. Die Threads werden laufend nach
+Last verteilt: rechnet ein Prozess allein, bekommt er alle QWEN_THREADS;
+kommen weitere dazu, geben die laufenden beim nächsten Rechenschritt ab
+(und holen sich die Threads zurück, sobald andere fertig sind).
 Stürzt ein Prozess ab (z. B. Speicher), wird seine Anfrage mit Fehler
 beendet und der Prozess neu gestartet.
 
@@ -35,8 +37,11 @@ QWEN_WORKERS = int(os.environ.get("QWEN_WORKERS", "1") or 1)
 QWEN_WORKERS_BIG = int(os.environ.get("QWEN_WORKERS_BIG", "2") or 2)
 
 
-def _worker_main(idx: int, inq, outq) -> None:
-    """Läuft im eigenen Prozess: Anfragen holen, rechnen, Ergebnis zurück."""
+def _worker_main(idx: int, inq, outq, share) -> None:
+    """Läuft im eigenen Prozess: Anfragen holen, rechnen, Ergebnis zurück.
+    share: vom Hauptprozess laufend angepasster Thread-Anteil – wird vor
+    jedem Rechenschritt übernommen (live umverteilen, wenn Nachrichten
+    dazukommen oder fertig werden)."""
     logging.basicConfig(level=logging.INFO,
                         format=f"%(asctime)s %(levelname)s qwen-{idx + 1} %(name)s: %(message)s")
     import torch
@@ -44,6 +49,30 @@ def _worker_main(idx: int, inq, outq) -> None:
     from .tts import QwenEngine
 
     engine = QwenEngine()
+    current = [0]
+    wrapped = [None]
+
+    def follow_share() -> None:
+        n = share.value
+        if n != current[0]:
+            torch.set_num_threads(n)
+            current[0] = n
+
+    def wrap_model() -> None:
+        """Vor jedem Schritt von Talker und Code-Predictor den Anteil prüfen."""
+        model = engine._model
+        if model is None or wrapped[0] is model:
+            return
+        talker = model.model.talker
+        for mod in (talker.model, talker.code_predictor.model):
+            original = mod.forward
+
+            def forward(*a, _orig=original, **k):
+                follow_share()
+                return _orig(*a, **k)
+
+            mod.forward = forward
+        wrapped[0] = model
     while True:
         job = inq.get()
         if job is None:
@@ -52,8 +81,9 @@ def _worker_main(idx: int, inq, outq) -> None:
         try:
             t0 = time.perf_counter()
             engine.load(args["repo"])
+            wrap_model()
             load_s = time.perf_counter() - t0
-            torch.set_num_threads(args["threads"])
+            follow_share()
             t1 = time.perf_counter()
             samples = engine.synthesize(
                 args["text"], args["repo"], args.get("speaker"), args.get("ref_wav"),
@@ -74,6 +104,7 @@ class QwenPool:
         self._idle: set[int] = set(range(workers))
         self._procs: list = [None] * workers
         self._inqs: list = [None] * workers
+        self._shares: list = [None] * workers  # Thread-Anteil je Prozess (geteilt)
         self._outq = None
         self._futures: dict[int, tuple[Future, int]] = {}
         self._next_id = 0
@@ -94,7 +125,9 @@ class QwenPool:
 
     def _spawn(self, i: int) -> None:
         q = self._ctx.Queue()
-        p = self._ctx.Process(target=_worker_main, args=(i, q, self._outq),
+        share = self._ctx.Value("i", self.total_threads, lock=False)
+        self._shares[i] = share
+        p = self._ctx.Process(target=_worker_main, args=(i, q, self._outq, share),
                               name=f"qwen-{i + 1}", daemon=True)
         p.start()
         self._inqs[i], self._procs[i] = q, p
@@ -130,6 +163,16 @@ class QwenPool:
                             f"Rechenprozess {i + 1} abgestürzt (zu wenig Speicher?)"))
                 self._spawn(i)
 
+    def _rebalance(self) -> None:
+        """Threads auf die gerade rechnenden Prozesse verteilen (unter _cond)."""
+        busy = [i for i in range(self.workers) if i not in self._idle]
+        if not busy:
+            return
+        share = max(2, self.total_threads // len(busy))
+        for i in busy:
+            if self._shares[i] is not None:
+                self._shares[i].value = share
+
     # ------------------------------------------------------------- Anfragen
     def _allowed(self, repo: str) -> set[int]:
         if "1.7B" in repo:
@@ -146,17 +189,16 @@ class QwenPool:
                 self._cond.wait()
             i = min(self._idle & allowed)
             self._idle.discard(i)
-            busy = self.workers - len(self._idle)
+            self._rebalance()
             jid = self._next_id
             self._next_id += 1
             fut: Future = Future()
             self._futures[jid] = (fut, i)
-        # Threads nach Last: allein alle, sonst anteilig (min. 2)
-        job = dict(args, threads=max(2, self.total_threads // busy))
         try:
-            self._inqs[i].put((jid, job))
+            self._inqs[i].put((jid, dict(args)))
             return fut.result()
         finally:
             with self._cond:
                 self._idle.add(i)
+                self._rebalance()
                 self._cond.notify_all()
