@@ -173,6 +173,8 @@ function connectWs() {
         showNow(msg);
         break;
       case "done":
+        if (msg.perf) showPerf(msg.perf);
+        // fällt durch
       case "stop_audio":
         stopGenerating();
         speaking = false;
@@ -247,6 +249,7 @@ function showPerf(p) {
   let text = `Letzte Ausgabe: <b>${fmt(p.compute_s)} s</b> Rechenzeit für ${fmt(p.audio_s)} s Audio`;
   if (p.rtf != null) text += ` · RTF ${fmt(p.rtf)}`;
   if (p.decode_s >= 0.1) text += ` · davon Klang-Decoder ${fmt(p.decode_s)} s`;
+  if (p.first_s != null && p.audio_s > 0 && p.compute_s - p.first_s > 0.5) text += ` · erster Ton nach ${fmt(p.first_s)} s`;
   if (p.load_s >= 1) text += ` · + ${fmt(p.load_s)} s Modell laden`;
   el.perf.innerHTML = text;
   el.perf.append(" · " + p.voice + (p.device ? ` · ${p.device}` : ""));

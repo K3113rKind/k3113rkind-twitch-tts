@@ -81,7 +81,7 @@ QWEN_CHUNK_CHARS = 300
 QWEN_CHUNK_PAUSE_S = 0.25
 
 
-def _split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
+def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
     """Text an Satzenden (notfalls Kommas/Leerzeichen) in Abschnitte teilen."""
     text = text.strip()
     if len(text) <= max_chars:
@@ -247,7 +247,7 @@ class QwenEngine:
         import torch
 
         self.load(repo_id)
-        chunks = _split_for_qwen(text)
+        chunks = split_for_qwen(text)
         parts = []
         self._decode_s = 0.0
         t0 = time.perf_counter()

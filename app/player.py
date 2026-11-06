@@ -21,8 +21,11 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
-from .tts import TTS
-from .voices import VOICES, available_voices, is_available
+from .tts import TTS, split_for_qwen
+from .voices import VOICES, available_voices, is_available, is_qwen
+
+# Pause zwischen zwei Abschnitten eines langen Qwen-Texts
+PAUSE_BETWEEN_CHUNKS_S = 0.25
 
 log = logging.getLogger(__name__)
 
@@ -217,50 +220,107 @@ class ChatSpeaker:
         else:
             text = msg.text
 
+        # Qwen-Texte abschnittsweise: Der erste Abschnitt wird schon gespielt,
+        # während die nächsten im Hintergrund rechnen – lange Texte starten so
+        # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist
+        # schnell genug und bekommt den Text am Stück.
+        chunks = split_for_qwen(text) if is_qwen(voice) else [text]
+        chunks = chunks or [text]
+        speed = cfg["speed"]
+
+        self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
         # sonst sekundenlang kein Lebenszeichen in der GUI.
         await self.broadcaster.send(
             {"type": "generating", "username": msg.username, "text": msg.text}
         )
-        result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
-        self.last_perf = {
-            "voice": (cfg["voice_labels"].get(voice)
-                      or VOICES[voice]["label"].split(" – ")[0]),
-            "compute_s": round(result.compute_seconds, 2),
-            "load_s": round(result.load_seconds, 2),
-            "audio_s": round(result.duration_seconds, 2),
-            "cached": result.cached,
-            "device": getattr(self.tts, "qwen_device", None) if VOICES[voice].get("engine", "").startswith("qwen") else None,
-            "decode_s": round(result.decode_seconds, 2),
-            "rtf": round(result.compute_seconds / result.duration_seconds, 2)
-            if result.duration_seconds else None,
-        }
 
-        self._current_id += 1
-        utterance_id = self._current_id
-        self._skip.clear()
-        # Nur Anzeige für die UI/das Overlay – der Ton läuft über /stream.
-        await self.broadcaster.send(
-            {
-                "type": "speak",
-                "id": utterance_id,
-                "username": msg.username,
-                "text": msg.text,
-                "perf": self.last_perf,
-            }
-        )
+        def synth(chunk: str):
+            return asyncio.ensure_future(
+                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed)
+            )
 
-        # Sequential playback: wait until the stream has emitted the whole
-        # utterance or skip is pressed.
-        done_task = asyncio.ensure_future(self.audio.play(result.samples))
-        skip_task = asyncio.create_task(self._skip.wait())
-        done, pending = await asyncio.wait(
-            {done_task, skip_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
-        if skip_task in done:
+        totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0}
+        all_cached = True
+        t_start = time.perf_counter()
+        first_audio_s = None
+        utterance_id = None
+        pending = synth(chunks[0])
+        skipped = False
+
+        for idx in range(len(chunks)):
+            result, skipped = await self._wait_or_skip(pending)
+            if skipped:
+                break
+            # Nächsten Abschnitt sofort anstoßen, damit er rechnet, während
+            # dieser hier gespielt wird.
+            if idx + 1 < len(chunks):
+                pending = synth(chunks[idx + 1])
+
+            totals["compute"] += result.compute_seconds
+            totals["load"] += result.load_seconds
+            totals["audio"] += result.duration_seconds
+            totals["decode"] += result.decode_seconds
+            all_cached &= result.cached
+            self.last_perf = self._perf(cfg, voice, totals, all_cached, first_audio_s)
+
+            if idx == 0:
+                first_audio_s = time.perf_counter() - t_start
+                self._current_id += 1
+                utterance_id = self._current_id
+                # Nur Anzeige für die UI/das Overlay – der Ton läuft über /stream.
+                await self.broadcaster.send(
+                    {
+                        "type": "speak",
+                        "id": utterance_id,
+                        "username": msg.username,
+                        "text": msg.text,
+                        "perf": self.last_perf,
+                    }
+                )
+
+            samples = result.samples
+            if idx > 0:  # kurze Atempause zwischen den Abschnitten
+                import numpy as np
+
+                pause = np.zeros(int(PAUSE_BETWEEN_CHUNKS_S * result.sample_rate), dtype=np.float32)
+                samples = np.concatenate([pause, samples])
+            _, skipped = await self._wait_or_skip(self.audio.play(samples))
+            if skipped:
+                break
+
+        if skipped:
             self.audio.stop_current()
             await self.broadcaster.send({"type": "stop_audio"})
-        else:
-            await self.broadcaster.send({"type": "done", "id": utterance_id})
+            return
+        self.last_perf = self._perf(cfg, voice, totals, all_cached, first_audio_s)
+        await self.broadcaster.send({"type": "done", "id": utterance_id, "perf": self.last_perf})
+
+    async def _wait_or_skip(self, awaitable):
+        """Auf Rechnung oder Wiedergabe warten – oder abbrechen, wenn
+        "Überspringen" gedrückt wird. Liefert (Ergebnis, übersprungen)."""
+        task = asyncio.ensure_future(awaitable)
+        skip_task = asyncio.create_task(self._skip.wait())
+        done, _ = await asyncio.wait({task, skip_task}, return_when=asyncio.FIRST_COMPLETED)
+        skip_task.cancel()
+        if task in done:
+            return task.result(), False
+        # Eine laufende Berechnung im Thread lässt sich nicht abbrechen; ihr
+        # Ergebnis wird einfach verworfen.
+        task.cancel()
+        return None, True
+
+    def _perf(self, cfg, voice, totals, cached, first_audio_s) -> dict:
+        audio = totals["audio"]
+        return {
+            "voice": (cfg["voice_labels"].get(voice)
+                      or VOICES[voice]["label"].split(" – ")[0]),
+            "compute_s": round(totals["compute"], 2),
+            "load_s": round(totals["load"], 2),
+            "audio_s": round(audio, 2),
+            "cached": cached,
+            "device": self.tts.qwen_device if is_qwen(voice) else None,
+            "decode_s": round(totals["decode"], 2),
+            "first_s": round(first_audio_s, 2) if first_audio_s is not None else None,
+            "rtf": round(totals["compute"] / audio, 2) if audio else None,
+        }
