@@ -424,10 +424,19 @@ class TTS:
         """Nach dem Start: Qwen-Modell laden und auf der GPU mit ein paar
         Probesätzen verschiedener Länge aufwärmen (torch.compile kompiliert
         dabei), damit der erste echte Satz nicht warten muss."""
-        if not voices_mod.is_qwen(voice_key) or not voices_mod.is_available(voice_key):
+        # Reihenfolge wichtig: is_available liest eigene Stimmen erst ein –
+        # vorher kennt is_qwen "klon-…"-Schlüssel noch nicht (KeyError, das
+        # Aufwärmen fiel dadurch stillschweigend aus).
+        try:
+            if not voices_mod.is_available(voice_key) or not voices_mod.is_qwen(voice_key):
+                log.info("Kein Aufwärmen: gewählte Stimme %s ist keine Qwen-Stimme", voice_key)
+                return
+        except Exception as exc:
+            log.warning("Aufwärmen übersprungen: %s", exc)
             return
         self.warming = True
         t0 = time.perf_counter()
+        log.info("Aufwärmen: lade %s …", voice_key)
         try:
             self.load(voice_key)
             if (self._qwen.device_name or "CPU") == "CPU":
