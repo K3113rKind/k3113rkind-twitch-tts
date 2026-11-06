@@ -260,21 +260,14 @@ class ChatSpeaker:
         if not (is_qwen(voice) and self.tts.pool_active):
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
-        # Zuerst Nachrichten, bei denen der Anfang komplett fertig ist (bei
-        # abgetrennter Namensansage: Name UND erster Textabschnitt) – sonst
-        # entsteht nach "X sagt:" eine Lücke. Erst wenn keine so weit ist,
-        # eine, deren Name schon fertig ist (nach Chat-Pausen früherer Ton).
-        name_only = None
+        # Nur Nachrichten, deren Anfang komplett fertig ist – bei abgetrennter
+        # Namensansage Name UND erster Textabschnitt. "X sagt:" startet also
+        # nie vor dem Text, sonst entsteht eine unnatürliche Lücke.
         for m in self._queue:
             chunks = self._message_chunks(m, cfg, voice)
             head = chunks[:2] if self._is_name_chunk(chunks[0], m) and len(chunks) > 1 else chunks[:1]
-            ready = [self.tts.has_result(t, voice, temperature, instruct) for t in head]
-            if all(ready):
+            if all(self.tts.has_result(t, voice, temperature, instruct) for t in head):
                 return m
-            if ready[0] and name_only is None:
-                name_only = m
-        if name_only is not None and not self._prefetch_tasks:
-            return name_only
         if self._prefetch_tasks:
             return None  # gleich ist etwas fertig
         # Nichts fertig und nichts in Arbeit (z. B. Fehler): älteste direkt rechnen
