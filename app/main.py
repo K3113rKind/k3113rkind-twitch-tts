@@ -23,7 +23,8 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import available_voices, is_available, ref_dir, sync_clone_voices
+from .voices import (DEFAULT_VOICE, QWEN_BASE_MODELS, available_voices, is_available,
+                     ref_dir, sync_clone_voices)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -357,6 +358,49 @@ async def clone_text(body: dict):
     if clone_job.get("result") and clone_job["result"].get("name") == name:
         clone_job["result"]["text"] = text
     return {"ok": True}
+
+
+@app.get("/api/clone/voices")
+async def clone_voices():
+    """Eigene Stimmen im Referenzordner (Name, Größe, Text)."""
+    folder = ref_dir()
+    out = []
+    if folder.is_dir():
+        for wav in sorted(folder.glob("*.wav")):
+            txt = wav.with_suffix(".txt")
+            size = wav.stat().st_size + (txt.stat().st_size if txt.exists() else 0)
+            out.append({"name": wav.stem, "kb": round(size / 1024),
+                        "text": txt.read_text(encoding="utf-8").strip() if txt.exists() else ""})
+    return out
+
+
+@app.delete("/api/clone/voices/{name}")
+async def clone_delete(name: str):
+    """Eigene Stimme löschen: Dateien, Umbenennungen, RAM-Cache. War sie
+    ausgewählt, wird auf die Standardstimme umgeschaltet."""
+    name = name.strip().lower()
+    folder = ref_dir()
+    if not CLONE_NAME.match(name) or not (folder / f"{name}.wav").exists():
+        raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
+    if clone_job.get("running") and clone_job.get("name") == name:
+        raise HTTPException(409, "Diese Stimme wird gerade erstellt.")
+    keys = {f"klon-{size}-{name}" for size in QWEN_BASE_MODELS}
+    changes = {}
+    if config.get("voice") in keys:
+        changes["voice"] = DEFAULT_VOICE
+        speaker.skip()
+    labels = dict(config.get("voice_labels") or {})
+    if any(k in labels for k in keys):
+        changes["voice_labels"] = {k: v for k, v in labels.items() if k not in keys}
+    if changes:
+        config.update(changes)
+    for suffix in (".wav", ".txt"):
+        (folder / f"{name}{suffix}").unlink(missing_ok=True)
+    sync_clone_voices()
+    tts.forget_clone(name)
+    log.info("Eigene Stimme %s gelöscht", name)
+    await broadcaster.send({"type": "voices_changed"})
+    return {"ok": True, "voice": config.get("voice")}
 
 
 @app.post("/api/skip")

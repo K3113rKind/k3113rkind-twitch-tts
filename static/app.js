@@ -19,7 +19,7 @@ const el = {
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"),
   cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
-  cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
+  cloneList: $("clone-list"), cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
   style: $("qwen_style"), styleCustom: $("qwen_style_custom"), styleRow: $("style-row"),
   temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
@@ -191,6 +191,7 @@ function connectWs() {
         break;
       case "voices_changed":
         refreshStatus();
+        loadCloneList();
         break;
       case "error":
         stopGenerating();
@@ -592,3 +593,45 @@ el.cloneTextSave.addEventListener("click", async () => {
   connectWs();
   setInterval(refreshStatus, 5000);
 })();
+
+// ---------------------------------------------------- eigene Stimmen löschen
+async function loadCloneList() {
+  const list = await fetch("/api/clone/voices").then((r) => r.json()).catch(() => null);
+  if (!list) return;
+  el.cloneList.innerHTML = "";
+  if (!list.length) {
+    el.cloneList.innerHTML = '<li class="muted">Keine eigenen Stimmen.</li>';
+    return;
+  }
+  for (const v of list) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = v.name;
+    const meta = document.createElement("span");
+    meta.className = "meta muted";
+    meta.textContent = `${v.kb} KB · ${v.text}`;
+    meta.title = v.text;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Löschen";
+    btn.addEventListener("click", async () => {
+      if (!window.confirm(`Eigene Stimme „${v.name}“ endgültig löschen?`)) return;
+      btn.disabled = true;
+      const res = await fetch(`/api/clone/voices/${encodeURIComponent(v.name)}`, { method: "DELETE" });
+      if (!res.ok) {
+        btn.disabled = false;
+        const err = await res.json().catch(() => ({}));
+        showError(err.detail || "Löschen fehlgeschlagen.");
+        return;
+      }
+      const data = await res.json();
+      el.voice.dataset.selected = data.voice;
+      if (el.cloneResult.dataset.name === v.name) el.cloneResult.classList.add("hidden");
+      // Liste/Dropdown aktualisiert die voices_changed-Nachricht
+    });
+    li.append(name, meta, btn);
+    el.cloneList.append(li);
+  }
+}
+loadCloneList();

@@ -249,3 +249,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .cols { grid-template-columns: 1fr; }
   .actions { flex-direction: column; }
 }
+
+.clone-list { list-style: none; padding: 0; margin: 0.3rem 0 0.8rem; }
+.clone-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
+.clone-list li:last-child { border-bottom: 0; }
+.clone-list .name { font-weight: 600; }
+.clone-list .meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clone-list button {
+  padding: 0.3rem 0.8rem; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--text); cursor: pointer; white-space: nowrap;
+}

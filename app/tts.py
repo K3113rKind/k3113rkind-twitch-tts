@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 import re
 import threading
 import time
@@ -461,6 +462,16 @@ class TTS:
 
     def is_ready(self) -> bool:
         return self._ready
+
+    def forget_clone(self, name: str) -> None:
+        """Nach dem Löschen einer eigenen Stimme: vorberechnete Referenz und
+        zwischengespeicherte Sätze aus dem RAM werfen."""
+        keys = {f"klon-{size}-{name}" for size in voices_mod.QWEN_BASE_MODELS}
+        for key in [k for k in list(self._qwen_cache) if k[0] in keys]:
+            self._qwen_cache.pop(key, None)
+        prompts = self._qwen._clone_prompts
+        for key in [k for k in prompts if Path(k[1]).stem == name]:
+            prompts.pop(key, None)
 
     @property
     def qwen_device(self) -> str | None:
