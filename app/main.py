@@ -21,6 +21,17 @@ from .voices import available_voices, is_available
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 
+
+class _QuietPolling(logging.Filter):
+    """Die Oberfläche fragt alle paar Sekunden /api/status ab – diese Zeilen
+    verdecken im Terminal sonst alles Wichtige."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/status" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietPolling())
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # Oberfläche immer frisch prüfen lassen (mit ETag kostet das nur ein 304).
