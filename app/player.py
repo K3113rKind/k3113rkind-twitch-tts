@@ -29,6 +29,8 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 # Mehrere Rechenprozesse: Texte bis zu dieser Länge (Zeichen, inkl. Name)
 # gelten als kurz und werden bevorzugt gerechnet.
 SHORT_CHARS = 60
+# Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
+NAME_SPLIT_MIN_CHARS = 25
 
 log = logging.getLogger(__name__)
 
@@ -238,7 +240,7 @@ class ChatSpeaker:
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
         for m in self._queue:
-            text = self._chunks(self._spoken_text(m, cfg, voice), voice)[0]
+            text = self._message_chunks(m, cfg, voice)[0]
             if self.tts.has_result(text, voice, temperature, instruct):
                 return m
         if self._prefetch_tasks:
@@ -291,6 +293,23 @@ class ChatSpeaker:
                   if is_chunked(voice) else [text])
         return chunks or [text]
 
+    def _message_chunks(self, msg: QueuedMessage, cfg, voice: str) -> list[str]:
+        """Abschnitte einer Nachricht. Mit mehreren Rechenprozessen wird die
+        Namensansage ("X sagt:") ein eigener, kurzer Abschnitt: Er ist schnell
+        fertig (und bei Stammgästen schon im Zwischenspeicher), der eigentliche
+        Text rechnet parallel – der erste Ton kommt so deutlich früher.
+        Sehr kurze Nachrichten bleiben am Stück (einzelne Wörter verschluckt
+        Qwen sonst eher)."""
+        if (cfg["read_username"] and not msg.raw and is_qwen(voice)
+                and self.tts.pool_active and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
+            if cfg["username_style"] == "sagt":
+                verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
+                prefix = f"{msg.username} {verb}:"
+            else:
+                prefix = f"{msg.username}:"
+            return [prefix] + self._chunks(msg.text, voice)
+        return self._chunks(self._spoken_text(msg, cfg, voice), voice)
+
     def _maybe_prefetch(self) -> None:
         """Qwen mit mehreren Rechenprozessen (CPU): wartende Nachrichten
         sofort an freie Prozesse verteilen – auch während noch eine Nachricht
@@ -317,16 +336,22 @@ class ChatSpeaker:
             return
         # Kurze Nachrichten zuerst (schnell hörbar), sonst der Reihe nach.
         # Gespielt wird später die älteste fertige.
-        candidates = [(m, self._chunks(self._spoken_text(m, cfg, voice), voice)[0])
+        candidates = [(m, self._message_chunks(m, cfg, voice))
                       for m in self._queue if not m.batched]
-        candidates.sort(key=lambda c: len(c[1]) > SHORT_CHARS)  # stabil: Reihenfolge bleibt
+        # stabil sortiert: innerhalb von kurz/lang bleibt die Reihenfolge
+        candidates.sort(key=lambda c: len(c[0].text) > SHORT_CHARS)
         _, temperature, instruct = self._gen_params(cfg)
-        for m, text in candidates[:free]:
+        for m, chunks in candidates:
+            if free <= 0:
+                break
             m.batched = True
-            task = asyncio.ensure_future(asyncio.to_thread(
-                self.tts.prefetch_one, text, voice, temperature, instruct))
-            self._prefetch_tasks.add(task)
-            task.add_done_callback(self._prefetch_done)
+            # alle Abschnitte der Nachricht gleichzeitig anstoßen
+            for text in chunks:
+                task = asyncio.ensure_future(asyncio.to_thread(
+                    self.tts.prefetch_one, text, voice, temperature, instruct))
+                self._prefetch_tasks.add(task)
+                task.add_done_callback(self._prefetch_done)
+            free -= len(chunks)
 
     def _prefetch_done(self, task) -> None:
         self._prefetch_tasks.discard(task)
@@ -342,12 +367,11 @@ class ChatSpeaker:
     async def _speak_inner(self, msg: QueuedMessage) -> None:
         cfg = self.config.as_dict()
         voice = self._voice(cfg)
-        text = self._spoken_text(msg, cfg, voice)
         # Qwen-Texte abschnittsweise: Der erste Abschnitt wird schon gespielt,
         # während die nächsten im Hintergrund rechnen – lange Texte starten so
         # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist
         # schnell genug und bekommt den Text am Stück.
-        chunks = self._chunks(text, voice)
+        chunks = self._message_chunks(msg, cfg, voice)
         speed, temperature, instruct = self._gen_params(cfg)
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht

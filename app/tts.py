@@ -182,7 +182,7 @@ def _qwen_text(chunk: str) -> str:
     chunk = chunk.rstrip()
     if not chunk:
         return chunk
-    if chunk[-1] not in ".!?…":
+    if chunk[-1] not in ".!?…:":  # ":" = Namensansage, Stimme bleibt "offen"
         chunk += "."
     return chunk + QWEN_END_TAIL if QWEN_END_FIX else chunk
 
