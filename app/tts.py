@@ -739,7 +739,9 @@ class TTS:
                             ref_wav=spec.get("ref_wav"), ref_txt=spec.get("ref_txt"),
                             text=WARMUP_TEXTS[0])
                 allowed = sorted(self._pool._allowed(spec["model"]))
-                with ThreadPoolExecutor(len(allowed)) as ex:
+                # Höchstens 2 gleichzeitig laden: beim Laden braucht ein Modell
+                # kurzzeitig deutlich mehr Speicher (6 auf einmal -> OOM-Kill)
+                with ThreadPoolExecutor(min(2, len(allowed))) as ex:
                     list(ex.map(lambda i: self._pool.submit(dict(args), worker=i), allowed))
                 log.info("Qwen in %d Rechenprozessen geladen in %.0f s",
                          len(allowed), time.perf_counter() - t0)
