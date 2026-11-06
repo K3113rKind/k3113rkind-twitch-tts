@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
     "keepalive_level": 0.003,
+    # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
+    # über "Umbenennen" gesetzt; leerer Name = Standardname.
+    "voice_labels": {},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -105,6 +108,14 @@ class ConfigStore:
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
                          "keep_speakers_awake"):
                 value = bool(value)
+            elif key == "voice_labels":
+                if not isinstance(value, dict):
+                    continue
+                value = {
+                    str(k): str(v).strip()[:80]
+                    for k, v in value.items()
+                    if str(v).strip()
+                }
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":

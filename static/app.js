@@ -13,7 +13,7 @@ const el = {
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
-  applyChannel: $("apply-channel"), applyVoice: $("apply-voice"),
+  applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"),
@@ -228,6 +228,7 @@ function fillVoices(voices) {
     const opt = document.createElement("option");
     opt.value = v.key;
     opt.textContent = v.label;
+    opt.dataset.defaultLabel = v.default_label || v.label;
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
@@ -299,6 +300,7 @@ function applyConfig(c) {
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
+  voiceLabels = c.voice_labels || {};
   updateSliderLabels();
   updateKeepaliveLabel();
 }
@@ -362,6 +364,32 @@ async function applyNow(button, endpoint) {
 
 el.applyChannel.addEventListener("click", () => applyNow(el.applyChannel, "/api/apply/channel"));
 el.applyVoice.addEventListener("click", () => applyNow(el.applyVoice, "/api/apply/voice"));
+
+/* Stimme umbenennen: eigener Anzeigename, leer = Standardname */
+let voiceLabels = {};
+el.renameVoice.addEventListener("click", async () => {
+  const opt = el.voice.selectedOptions[0];
+  if (!opt) return;
+  const name = window.prompt(
+    `Neuer Name für diese Stimme (leer lassen = Standard):\n${opt.dataset.defaultLabel}`,
+    opt.textContent,
+  );
+  if (name === null) return; // abgebrochen
+  const labels = { ...voiceLabels };
+  if (name.trim() && name.trim() !== opt.dataset.defaultLabel) labels[opt.value] = name.trim();
+  else delete labels[opt.value];
+  const res = await fetch("/api/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice_labels: labels }),
+  });
+  if (res.ok) {
+    voiceLabels = (await res.json()).voice_labels || {};
+    refreshStatus();
+  } else {
+    showError("Umbenennen fehlgeschlagen");
+  }
+});
 
 // Enter im Kanalfeld verhält sich wie der Wechseln-Knopf.
 el.channel.addEventListener("keydown", (ev) => {

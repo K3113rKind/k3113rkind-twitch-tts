@@ -224,7 +224,8 @@ class ChatSpeaker:
         )
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
         self.last_perf = {
-            "voice": VOICES[voice]["label"].split(" – ")[0],
+            "voice": (cfg["voice_labels"].get(voice)
+                      or VOICES[voice]["label"].split(" – ")[0]),
             "compute_s": round(result.compute_seconds, 2),
             "load_s": round(result.load_seconds, 2),
             "audio_s": round(result.duration_seconds, 2),

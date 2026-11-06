@@ -169,11 +169,18 @@ def is_available(voice_key: str) -> bool:
     )
 
 
-def available_voices() -> list[dict]:
+def display_name(voice_key: str, custom: dict | None = None) -> str:
+    """Anzeigename: eigener Name aus der Config, sonst der Standardname."""
+    if custom and custom.get(voice_key):
+        return custom[voice_key]
+    return VOICES[voice_key]["label"]
+
+
+def available_voices(custom: dict | None = None) -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
     sync_clone_voices()
     return [
-        {"key": key, "label": data["label"]}
+        {"key": key, "label": display_name(key, custom), "default_label": data["label"]}
         for key, data in list(VOICES.items())
         if is_available(key)
     ]

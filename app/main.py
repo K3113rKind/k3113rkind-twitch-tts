@@ -74,7 +74,7 @@ def _status() -> dict:
         "channel": twitch.channel if twitch else None,
         "loading": state["loading"],
         "error": state["error"],
-        "voices": available_voices(),
+        "voices": available_voices(config.get("voice_labels")),
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
