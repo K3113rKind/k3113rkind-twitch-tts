@@ -81,8 +81,20 @@ QWEN_CHUNK_CHARS = 300
 QWEN_CHUNK_PAUSE_S = 0.25
 
 
-def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
-    """Text an Satzenden (notfalls Kommas/Leerzeichen) in Abschnitte teilen."""
+# Der erste Abschnitt eines langen Texts ist kürzer, damit der Ton schneller
+# startet; die übrigen rechnen, während er läuft.
+QWEN_FIRST_CHUNK_CHARS = 120
+
+
+def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
+                   first_max: int | None = None) -> list[str]:
+    """Text an Satzenden (notfalls Kommas/Leerzeichen) in Abschnitte teilen.
+    first_max: kürzere Obergrenze nur für den ersten Abschnitt."""
+    if first_max and len(text.strip()) > first_max:
+        # Leerraum vereinheitlichen, damit der Rest exakt hinter dem Kopf beginnt
+        flat = re.sub(r"\s+", " ", text).strip()
+        head, rest = _take_head(flat, first_max)
+        return [head] + split_for_qwen(rest, max_chars) if rest else [head]
     text = text.strip()
     if len(text) <= max_chars:
         return [text] if text else []
@@ -108,6 +120,29 @@ def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS) -> list[str]:
         else:
             chunks.append(piece)
     return chunks
+
+
+def _take_head(text: str, limit: int) -> tuple[str, str]:
+    """Ersten Satz (oder Satzteil bis Komma/Leerzeichen) bis limit Zeichen."""
+    sentences = [s for s in re.split(r"(?<=[.!?…;:])\s+|\n+", text) if s.strip()]
+    head = sentences[0].strip()
+    # mehrere kurze Sätze dürfen zusammen in den ersten Abschnitt
+    for s in sentences[1:]:
+        # sehr kurzen Anfang ("Bild:") mit dem nächsten Satz verbinden und
+        # notfalls unten am Komma/Leerzeichen kürzen
+        if len(head) + 1 + len(s.strip()) > limit and len(head) >= limit // 3:
+            break
+        head += " " + s.strip()
+        if len(head) > limit:
+            break
+    if len(head) > limit:
+        cut = head.rfind(", ", 0, limit)
+        if cut < limit // 3:
+            cut = head.rfind(" ", 0, limit)
+        if cut > 0:
+            head = head[:cut + 1].strip()
+    assert text.startswith(head)
+    return head, text[len(head):].strip()
 
 
 # Qwen würfelt bei jeder Erzeugung (Sampling, Temperatur 0.9) – derselbe Satz
@@ -143,9 +178,14 @@ def _qwen_device():
             # eigene GPU-Faltungen umgehen das. QWEN_MIOPEN=1 schaltet es zurück.
             torch.backends.cudnn.enabled = False
             log.info("ROCm: MIOpen für Faltungen abgeschaltet (QWEN_MIOPEN=1 zum Testen)")
-        # bfloat16 auf der GPU: halber Speicher, deutlich schneller; von Qwen
-        # so empfohlen. Auf der CPU bleibt es bei float32 (Skylake ohne bf16).
-        return "cuda:0", torch.bfloat16, torch.cuda.get_device_name(0)
+        # Genauigkeit auf der GPU (QWEN_GPU_DTYPE): Standard float32 wie auf
+        # der CPU. bfloat16 spart Speicher, klang aber hörbar anders (Betonung,
+        # teils abgeschnittene Satzenden); da Qwen hier ohnehin vom Verwaltungs-
+        # aufwand gebremst wird, kostet float32 kaum Tempo.
+        dtypes = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+        name = os.environ.get("QWEN_GPU_DTYPE", "float32").strip().lower()
+        dtype = dtypes.get(name, torch.float32)
+        return "cuda:0", dtype, torch.cuda.get_device_name(0)
     return "cpu", torch.float32, "CPU"
 
 
@@ -237,7 +277,9 @@ class QwenEngine:
                 f"{torch.get_num_threads()} Threads" if device == "cpu" else str(dtype),
             )
             model = Qwen3TTSModel.from_pretrained(str(snapshot), device_map=device, dtype=dtype)
-            self.device_name = device_name
+            self.device_name = device_name if device == "cpu" else (
+                f"{device_name} · {str(dtype).replace('torch.', '')}"
+            )
             self._compiled = []
             mode = _compile_mode()
             if mode and device != "cpu":
@@ -248,7 +290,7 @@ class QwenEngine:
                     original = mod.forward
                     mod.forward = torch.compile(original, mode=mode, dynamic=True)
                     self._compiled.append((mod, original))
-                self.device_name = f"{device_name} · compile {mode}"
+                self.device_name = f"{self.device_name} · compile {mode}"
                 log.info("torch.compile aktiv (%s) – erster Satz dauert länger", mode)
             # Zeit des Klang-Decoders mitmessen (Diagnose: Anteil an der Rechenzeit)
             tokenizer = model.model.speech_tokenizer
@@ -325,6 +367,8 @@ class QwenEngine:
                     self._trim_codes = 0
             audio = _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
             dur = len(audio) / SAMPLE_RATE
+            log.info("Abschnitt %d/%d: %d Zeichen -> %.1f s Audio, Ende: »…%s«",
+                     i, len(chunks), len(chunk), dur, chunk[-40:])
             if dur >= _qwen_token_budget(chunk) / QWEN_STEPS_PER_SECOND - 0.5:
                 log.warning(
                     "Qwen hat das Satzende nicht gefunden, Abschnitt %d/%d nach %.0f s "
@@ -346,6 +390,14 @@ class QwenEngine:
         return samples
 
 
+WARMUP_TEXTS = [
+    "Hallo.",
+    "Das ist ein kurzer Satz zum Aufwärmen.",
+    "Und hier kommt ein etwas längerer Satz, damit auch größere Längen schon "
+    "einmal durchgerechnet sind, bevor die erste echte Nachricht kommt.",
+]
+
+
 class TTS:
     def __init__(self) -> None:
         # Pipelines pro (Backbone, Sprache) – Laden kostet Zeit/RAM,
@@ -365,6 +417,32 @@ class TTS:
     @property
     def qwen_device(self) -> str | None:
         return self._qwen.device_name
+
+    warming = False
+
+    def warmup(self, voice_key: str) -> None:
+        """Nach dem Start: Qwen-Modell laden und auf der GPU mit ein paar
+        Probesätzen verschiedener Länge aufwärmen (torch.compile kompiliert
+        dabei), damit der erste echte Satz nicht warten muss."""
+        if not voices_mod.is_qwen(voice_key) or not voices_mod.is_available(voice_key):
+            return
+        self.warming = True
+        t0 = time.perf_counter()
+        try:
+            self.load(voice_key)
+            if (self._qwen.device_name or "CPU") == "CPU":
+                log.info("Qwen-Modell vorgeladen (CPU, kein Aufwärmen nötig)")
+                return
+            log.info("Aufwärmen der GPU mit Probesätzen …")
+            spec = voices_mod.VOICES[voice_key]
+            for text in WARMUP_TEXTS:
+                self._qwen.synthesize(text, spec["model"], spec.get("speaker"),
+                                      spec.get("ref_wav"), spec.get("ref_txt"))
+            log.info("Aufwärmen fertig in %.0f s", time.perf_counter() - t0)
+        except Exception as exc:  # Aufwärmen darf den Betrieb nie verhindern
+            log.warning("Aufwärmen fehlgeschlagen: %s", exc)
+        finally:
+            self.warming = False
 
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""

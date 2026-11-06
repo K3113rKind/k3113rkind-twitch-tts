@@ -16,7 +16,7 @@ const el = {
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
-  sayText: $("say-text"), sayBtn: $("say"),
+  sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"),
   perf: $("perf"),
 };
 
@@ -204,6 +204,7 @@ function applyStatus(s) {
   el.statusText.textContent = s.connected
     ? `Verbunden mit #${s.channel}`
     : s.running ? "Verbinde …" : "Nicht verbunden";
+  if (s.warming) el.statusText.textContent += " · Stimme wird aufgewärmt …";
   el.startstop.textContent = s.running ? "Vorlesen stoppen" : "Vorlesen starten";
   el.startstop.classList.toggle("running", s.running);
   running = s.running;
@@ -452,6 +453,8 @@ el.sayBtn.addEventListener("click", async () => {
     el.sayBtn.disabled = false;
   }
 });
+
+el.sayCancel.addEventListener("click", () => fetch("/api/say/cancel", { method: "POST" }));
 
 // Strg+Enter (bzw. Cmd+Enter) im Textfeld = Vorlesen
 el.sayText.addEventListener("keydown", (ev) => {

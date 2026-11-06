@@ -27,6 +27,10 @@ services:
       - seccomp=unconfined
     environment:
       - QWEN_DEVICE=auto
+      # Rechengenauigkeit: float32 (Standard, wie CPU), bfloat16 oder float16
+      - QWEN_GPU_DTYPE=${QWEN_GPU_DTYPE:-float32}
+      # Nach dem Start Stimme laden und mit Probesätzen aufwärmen (0 = aus)
+      - QWEN_WARMUP=${QWEN_WARMUP:-1}
       # MIOpen ist standardmäßig aus (siehe app/tts.py). Wer es mit
       # QWEN_MIOPEN=1 testet: schnelle Suche statt Ausprobieren aller Wege,
       # Ergebnisse überleben Neustarts.

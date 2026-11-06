@@ -21,7 +21,7 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
-from .tts import TTS, split_for_qwen
+from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
 from .voices import VOICES, available_voices, is_available, is_qwen
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
@@ -78,6 +78,7 @@ class ChatSpeaker:
         self._worker: asyncio.Task | None = None
         self._skip = asyncio.Event()
         self._current_id = 0
+        self._current_raw = False  # läuft gerade ein Testtext?
         # Leistungswerte der letzten Ausgabe (Twitch oder Testtext) für die GUI
         self.last_perf: dict | None = None
         self.dropped_total = 0
@@ -199,7 +200,22 @@ class ChatSpeaker:
                 log.error("TTS für Nachricht von %s fehlgeschlagen: %s", msg.username, exc)
                 await self.broadcaster.send({"type": "error", "message": str(exc)})
 
+    async def cancel_test(self) -> None:
+        """Testtexte abbrechen: wartende aus der Queue nehmen, laufenden stoppen.
+        Twitch-Nachrichten bleiben unberührt."""
+        self._queue = deque(m for m in self._queue if not m.raw)
+        if self._current_raw:
+            self._skip.set()
+        await self._push_queue_state()
+
     async def _speak(self, msg: QueuedMessage) -> None:
+        self._current_raw = msg.raw
+        try:
+            await self._speak_inner(msg)
+        finally:
+            self._current_raw = False
+
+    async def _speak_inner(self, msg: QueuedMessage) -> None:
         cfg = self.config.as_dict()
         voice = cfg["voice"]
         if not is_available(voice):
@@ -224,7 +240,8 @@ class ChatSpeaker:
         # während die nächsten im Hintergrund rechnen – lange Texte starten so
         # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist
         # schnell genug und bekommt den Text am Stück.
-        chunks = split_for_qwen(text) if is_qwen(voice) else [text]
+        chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
+                  if is_qwen(voice) else [text])
         chunks = chunks or [text]
         speed = cfg["speed"]
 

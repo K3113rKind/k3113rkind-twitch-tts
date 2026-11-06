@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -73,6 +74,7 @@ def _status() -> dict:
         "connected": bool(twitch and twitch.connected),
         "channel": twitch.channel if twitch else None,
         "loading": state["loading"],
+        "warming": tts.warming,
         "error": state["error"],
         "voices": available_voices(config.get("voice_labels")),
         "queue_size": speaker.queue_size,
@@ -211,6 +213,22 @@ async def say(body: dict):
 
     await speaker.say_text(text)
     return {"ok": True, "queue_size": speaker.queue_size}
+
+
+@app.post("/api/say/cancel")
+async def say_cancel():
+    """Testtexte abbrechen (laufenden und wartende); Twitch bleibt unberührt."""
+    await speaker.cancel_test()
+    return {"ok": True}
+
+
+@app.on_event("startup")
+async def warmup_on_start():
+    """Gewählte Qwen-Stimme gleich nach dem Start laden und auf der GPU
+    aufwärmen (QWEN_WARMUP=0 schaltet das ab)."""
+    if os.environ.get("QWEN_WARMUP", "1") == "0":
+        return
+    asyncio.create_task(asyncio.to_thread(tts.warmup, config.get("voice")))
 
 
 @app.post("/api/skip")
