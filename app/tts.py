@@ -343,7 +343,8 @@ class QwenEngine:
         return self._clone_prompts[key]
 
     def synthesize(self, text: str, repo_id: str, speaker: str | None = None,
-                   ref_wav: str | None = None, ref_txt: str | None = None):
+                   ref_wav: str | None = None, ref_txt: str | None = None,
+                   temperature: float | None = None):
         import numpy as np
         import torch
 
@@ -366,11 +367,13 @@ class QwenEngine:
                         text=chunk, language="German",
                         voice_clone_prompt=prompt,
                         max_new_tokens=_qwen_token_budget(chunk),
+                        temperature=temperature,
                     )
                 else:
                     gen = lambda: self._model.generate_custom_voice(  # noqa: E731
                         text=chunk, language="German", speaker=speaker,
                         max_new_tokens=_qwen_token_budget(chunk),
+                        temperature=temperature,
                     )
                 try:
                     try:
@@ -517,7 +520,8 @@ class TTS:
 
         self._ready = True
 
-    def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
+    def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
+                   temperature: float | None = None) -> SynthesisResult:
         if voice_key.startswith("klon-"):
             voices_mod.sync_clone_voices()
         if voice_key not in voices_mod.VOICES:
@@ -532,7 +536,7 @@ class TTS:
             ref_stamp = tuple(
                 os.path.getmtime(spec[k]) for k in ("ref_wav", "ref_txt") if k in spec
             )
-            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, text)
+            key = (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, text)
             if key in self._qwen_cache:
                 self._qwen_cache.move_to_end(key)
                 samples = self._qwen_cache[key]
@@ -545,7 +549,7 @@ class TTS:
             t0 = time.perf_counter()
             samples = self._qwen.synthesize(
                 text, spec["model"], spec.get("speaker"),
-                spec.get("ref_wav"), spec.get("ref_txt"),
+                spec.get("ref_wav"), spec.get("ref_txt"), temperature,
             )
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")

@@ -17,6 +17,7 @@ const el = {
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"),
+  temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
 };
 
@@ -232,9 +233,17 @@ function fillVoices(voices) {
     opt.value = v.key;
     opt.textContent = v.label;
     opt.dataset.defaultLabel = v.default_label || v.label;
+    opt.dataset.qwen = v.qwen ? "1" : "";
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
+  updateTemperatureRow();
+}
+
+// Betonungs-Regler nur bei Qwen-Stimmen zeigen
+function updateTemperatureRow() {
+  const opt = el.voice.selectedOptions[0];
+  el.temperatureRow.classList.toggle("hidden", !(opt && opt.dataset.qwen));
 }
 
 // Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
@@ -275,6 +284,7 @@ function collectConfig() {
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
+    qwen_temperature: parseFloat(el.temperature.value),
   };
 }
 
@@ -305,6 +315,7 @@ function applyConfig(c) {
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
   voiceLabels = c.voice_labels || {};
+  el.temperature.value = c.qwen_temperature ?? 0.9;
   updateSliderLabels();
   updateKeepaliveLabel();
 }
@@ -319,6 +330,7 @@ el.keepaliveLevel.addEventListener("input", () => { updateKeepaliveLabel(); save
 function updateSliderLabels() {
   el.volumeVal.textContent = Math.round(parseFloat(el.volume.value) * 100) + " %";
   el.speedVal.textContent = parseFloat(el.speed.value).toFixed(2) + "\u00d7";
+  el.temperatureVal.textContent = parseFloat(el.temperature.value).toFixed(2);
 }
 
 /* ---------------------------------------------------------------- Events */
@@ -326,9 +338,9 @@ for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.rea
                      el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
-el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });
+el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; updateTemperatureRow(); });
 el.channel.addEventListener("change", setMediaSession);
-for (const slider of [el.volume, el.speed]) {
+for (const slider of [el.volume, el.speed, el.temperature]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
 }
 

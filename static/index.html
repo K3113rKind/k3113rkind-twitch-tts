@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=12">
+<link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
 <main class="panel">
@@ -32,6 +32,11 @@
         <button id="rename-voice" type="button" title="Anzeigenamen dieser Stimme ändern">✎</button>
         <button id="apply-voice" type="button" title="Diese Stimme sofort verwenden">Wechseln</button>
       </span>
+    </label>
+    <label class="hidden" id="temperature-row">Betonung <output id="temperature-val">0.90</output>
+      <input id="qwen_temperature" type="range" min="0.3" max="1.2" step="0.05" value="0.9">
+      <span class="slider-ends"><span>gleichmäßig, nah an der Vorlage</span><span>lebendig, wilder</span></span>
+      <span class="muted">Nur Qwen-Stimmen. Gilt ab dem nächsten Satz, auch für Twitch. Standard 0.90.</span>
     </label>
   </section>
 
@@ -114,6 +119,6 @@
     </label>
   </details>
 </main>
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>

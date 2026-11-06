@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
     "keepalive_level": 0.003,
+    # Qwen: wie stark die Betonung variiert (Sampling-Temperatur). Niedriger =
+    # gleichmäßiger und näher an der Referenz, höher = lebendiger, aber wilder.
+    "qwen_temperature": 0.9,
     # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
     # über "Umbenennen" gesetzt; leerer Name = Standardname.
     "voice_labels": {},
@@ -104,6 +107,8 @@ class ConfigStore:
                 value = max(0, int(value))
                 if key == "queue_limit":
                     value = max(1, value)
+            elif key == "qwen_temperature":
+                value = round(min(max(float(value), 0.3), 1.2), 2)
             elif key == "keepalive_level":
                 value = min(max(float(value), 0.0), 0.05)
             elif key in ("volume", "speed"):

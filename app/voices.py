@@ -180,7 +180,8 @@ def available_voices(custom: dict | None = None) -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
     sync_clone_voices()
     return [
-        {"key": key, "label": display_name(key, custom), "default_label": data["label"]}
+        {"key": key, "label": display_name(key, custom), "default_label": data["label"],
+         "qwen": is_qwen(key)}
         for key, data in list(VOICES.items())
         if is_available(key)
     ]

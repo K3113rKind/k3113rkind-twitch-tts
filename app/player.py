@@ -244,6 +244,7 @@ class ChatSpeaker:
                   if is_qwen(voice) else [text])
         chunks = chunks or [text]
         speed = cfg["speed"]
+        temperature = cfg["qwen_temperature"]
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
@@ -254,7 +255,7 @@ class ChatSpeaker:
 
         def synth(chunk: str):
             return asyncio.ensure_future(
-                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed)
+                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed, temperature)
             )
 
         totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0}
