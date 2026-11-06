@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
     "keepalive_level": 0.003,
+    # Qwen-Stimmen: Sprachmodell auf int8 quantisieren (schneller auf CPU,
+    # Klang kann leiden). Wirkt nur bei Qwen; Umschalten lädt das Modell neu.
+    "qwen_int8": False,
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -103,7 +106,7 @@ class ConfigStore:
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
-                         "keep_speakers_awake"):
+                         "keep_speakers_awake", "qwen_int8"):
                 value = bool(value)
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})

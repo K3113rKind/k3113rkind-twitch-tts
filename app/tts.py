@@ -32,12 +32,16 @@ class SynthesisResult:
     """Rohe Samples (float32, mono, SAMPLE_RATE) – kodiert wird erst im
     Audio-Stream (stream.py)."""
 
-    __slots__ = ("samples", "duration_seconds", "sample_rate")
+    __slots__ = ("samples", "duration_seconds", "sample_rate", "compute_seconds",
+                 "load_seconds")
 
-    def __init__(self, samples, duration_seconds: float, sample_rate: int):
+    def __init__(self, samples, duration_seconds: float, sample_rate: int,
+                 compute_seconds: float = 0.0, load_seconds: float = 0.0):
         self.samples = samples
         self.duration_seconds = duration_seconds
         self.sample_rate = sample_rate
+        self.compute_seconds = compute_seconds  # reine Sprachberechnung
+        self.load_seconds = load_seconds        # Modell laden (nur beim ersten Mal)
 
 
 def _resample(samples, sr_in: int, sr_out: int):
@@ -56,22 +60,23 @@ class QwenEngine:
     """Qwen3-TTS (CustomVoice) auf CPU. Hält nur ein Modell im RAM – beim
     Wechsel zwischen 0.6B und 1.7B wird das vorherige freigegeben.
 
-    Stellschrauben (Umgebungsvariablen, siehe docker-compose.yml / .env):
-      QWEN_THREADS  Anzahl Torch-Threads; 0 = alle sichtbaren Kerne.
-                    Oft schneller: nur echte Kerne eines CPU-Sockels statt
-                    Hyper-Threads über beide Sockel verteilt.
-      QWEN_INT8     1 = Sprachmodell (Talker) dynamisch auf int8 quantisieren.
-                    Experimentell: meist schneller auf CPU, Klang kann leiden.
+    Stellschrauben:
+      QWEN_THREADS  (Umgebungsvariable, .env) Anzahl Torch-Threads; 0 = alle
+                    sichtbaren Kerne. Oft schneller: nur echte Kerne eines
+                    CPU-Sockels statt Hyper-Threads über beide Sockel verteilt.
+      int8          (Schalter in der GUI) Sprachmodell (Talker) dynamisch auf
+                    int8 quantisieren. Experimentell: meist schneller auf CPU,
+                    Klang kann leiden. Umschalten lädt das Modell neu.
     """
 
     def __init__(self) -> None:
-        self._repo: str | None = None
+        self._loaded: tuple[str, bool] | None = None  # (Modell, int8)
         self._model = None
         self._lock = threading.Lock()
 
-    def load(self, repo_id: str) -> None:
+    def load(self, repo_id: str, int8: bool = False) -> None:
         with self._lock:
-            if self._repo == repo_id:
+            if self._loaded == (repo_id, int8):
                 return
             snapshot = voices_mod.hf_snapshot(repo_id)
             if snapshot is None:
@@ -88,7 +93,6 @@ class QwenEngine:
             threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
             if threads > 0:
                 torch.set_num_threads(threads)
-            int8 = os.environ.get("QWEN_INT8", "0") == "1"
             log.info(
                 "Lade Qwen3-TTS: %s (%d Threads, int8 %s)",
                 repo_id, torch.get_num_threads(), "an" if int8 else "aus",
@@ -101,10 +105,10 @@ class QwenEngine:
                     model.model.talker, {torch.nn.Linear}, dtype=torch.qint8
                 )
             self._model = model
-            self._repo = repo_id
+            self._loaded = (repo_id, int8)
 
-    def synthesize(self, text: str, repo_id: str, speaker: str):
-        self.load(repo_id)
+    def synthesize(self, text: str, repo_id: str, speaker: str, int8: bool = False):
+        self.load(repo_id, int8)
         with self._lock:
             t0 = time.perf_counter()
             wavs, sr = self._model.generate_custom_voice(
@@ -113,8 +117,9 @@ class QwenEngine:
             took = time.perf_counter() - t0
         dur = len(wavs[0]) / int(sr) if sr else 0.0
         log.info(
-            "Qwen %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
-            repo_id.split("-12Hz-")[-1], speaker, took, dur, took / dur if dur else 0.0,
+            "Qwen %s/%s%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f)",
+            repo_id.split("-12Hz-")[-1], speaker, " int8" if int8 else "",
+            took, dur, took / dur if dur else 0.0,
         )
         return _resample(wavs[0].astype("float32"), int(sr), SAMPLE_RATE)
 
@@ -132,7 +137,7 @@ class TTS:
     def is_ready(self) -> bool:
         return self._ready
 
-    def load(self, voice_key: str) -> None:
+    def load(self, voice_key: str, qwen_int8: bool = False) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
         if voices_mod.engine(voice_key) == "qwen":
@@ -140,7 +145,7 @@ class TTS:
                 raise FileNotFoundError(
                     f"Für die Stimme '{spec['label']}' fehlt das Qwen-Modell oder das Paket qwen-tts."
                 )
-            self._qwen.load(spec["model"])
+            self._qwen.load(spec["model"], qwen_int8)
             self._ready = True
             return
 
@@ -178,25 +183,33 @@ class TTS:
 
         self._ready = True
 
-    def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
+    def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
+                   qwen_int8: bool = False) -> SynthesisResult:
         if voice_key not in voices_mod.VOICES:
             voice_key = voices_mod.DEFAULT_VOICE
 
         spec = voices_mod.VOICES[voice_key]
         if voices_mod.engine(voice_key) == "qwen":
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
-            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"])
+            t_load = time.perf_counter()
+            self.load(voice_key, qwen_int8)
+            t0 = time.perf_counter()
+            samples = self._qwen.synthesize(text, spec["model"], spec["speaker"], qwen_int8)
             if len(samples) == 0:
                 raise ValueError("Kein Audio erzeugt.")
             return SynthesisResult(
                 samples=samples,
                 duration_seconds=len(samples) / SAMPLE_RATE,
                 sample_rate=SAMPLE_RATE,
+                compute_seconds=time.perf_counter() - t0,
+                load_seconds=t0 - t_load,
             )
 
+        t_load = time.perf_counter()
         cache_key = (spec["backbone"], spec["lang"])
         if cache_key not in self._pipelines or voice_key not in self._packs:
             self.load(voice_key)
+        t0 = time.perf_counter()
 
         import numpy as np
 
@@ -215,4 +228,6 @@ class TTS:
             samples=samples,
             duration_seconds=len(samples) / SAMPLE_RATE,
             sample_rate=SAMPLE_RATE,
+            compute_seconds=time.perf_counter() - t0,
+            load_seconds=t0 - t_load,
         )

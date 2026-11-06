@@ -75,6 +75,8 @@ class ChatSpeaker:
         self._worker: asyncio.Task | None = None
         self._skip = asyncio.Event()
         self._current_id = 0
+        # Leistungswerte der letzten Ausgabe (Twitch oder Testtext) für die GUI
+        self.last_perf: dict | None = None
         self.dropped_total = 0
         self._emote_fetches: set[str] = set()
 
@@ -220,7 +222,19 @@ class ChatSpeaker:
         await self.broadcaster.send(
             {"type": "generating", "username": msg.username, "text": msg.text}
         )
-        result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
+        int8 = bool(cfg["qwen_int8"]) and VOICES[voice].get("engine") == "qwen"
+        result = await asyncio.to_thread(
+            self.tts.synthesize, text, voice, cfg["speed"], cfg["qwen_int8"]
+        )
+        self.last_perf = {
+            "voice": VOICES[voice]["label"].split(" – ")[0],
+            "int8": int8,
+            "compute_s": round(result.compute_seconds, 2),
+            "load_s": round(result.load_seconds, 2),
+            "audio_s": round(result.duration_seconds, 2),
+            "rtf": round(result.compute_seconds / result.duration_seconds, 2)
+            if result.duration_seconds else None,
+        }
 
         self._current_id += 1
         utterance_id = self._current_id
@@ -232,6 +246,7 @@ class ChatSpeaker:
                 "id": utterance_id,
                 "username": msg.username,
                 "text": msg.text,
+                "perf": self.last_perf,
             }
         )
 

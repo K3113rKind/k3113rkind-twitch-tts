@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
 <main class="panel">
@@ -32,11 +32,16 @@
         <button id="apply-voice" type="button" title="Diese Stimme sofort verwenden">Wechseln</button>
       </span>
     </label>
+    <label class="check hidden" id="qwen-int8-row">
+      <input id="qwen_int8" type="checkbox">
+      <span>Schneller rechnen (int8) <span class="muted">– nur Qwen, experimentell: Klang kann leiden, Umschalten lädt das Modell neu</span></span>
+    </label>
   </section>
 
   <section class="group live">
     <button id="audio-unlock" type="button" class="btn-unlock hidden">🔊 Ton auf diesem Gerät einschalten</button>
     <div class="now" id="now-playing">–</div>
+    <div class="perf" id="perf"></div>
     <div class="actions">
       <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
       <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
@@ -111,6 +116,6 @@
     </label>
   </details>
 </main>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>

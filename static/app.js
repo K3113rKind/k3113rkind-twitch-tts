@@ -17,6 +17,7 @@ const el = {
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"),
+  qwenInt8: $("qwen_int8"), qwenRow: $("qwen-int8-row"), perf: $("perf"),
 };
 
 /* --------------------------------------------------------- Audio-Player */
@@ -166,6 +167,7 @@ function connectWs() {
         break;
       case "speak":
         stopGenerating();
+        showPerf(msg.perf);
         speaking = true;
         updateSkipButton();
         showNow(msg);
@@ -205,6 +207,7 @@ function applyStatus(s) {
   running = s.running;
   updateSkipButton();
   fillVoices(s.voices || []);
+  if (s.last_perf && !el.perf.textContent) showPerf(s.last_perf);
   if (s.error) showError(s.error); else hideError();
 }
 
@@ -225,9 +228,29 @@ function fillVoices(voices) {
     const opt = document.createElement("option");
     opt.value = v.key;
     opt.textContent = v.label;
+    opt.dataset.engine = v.engine || "kokoro";
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
+  updateQwenRow();
+}
+
+// int8-Schalter nur zeigen, wenn eine Qwen-Stimme gewählt ist.
+function updateQwenRow() {
+  const opt = el.voice.selectedOptions[0];
+  el.qwenRow.classList.toggle("hidden", !(opt && opt.dataset.engine === "qwen"));
+}
+
+// Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
+// "Letzte Ausgabe: 7,4 s Rechenzeit für 2,1 s Audio · RTF 3,52 · Qwen 1.7B · Vivian (int8)"
+const fmt = (n) => Number(n).toLocaleString("de-DE", { maximumFractionDigits: 2, minimumFractionDigits: 1 });
+function showPerf(p) {
+  if (!p) return;
+  let text = `Letzte Ausgabe: <b>${fmt(p.compute_s)} s</b> Rechenzeit für ${fmt(p.audio_s)} s Audio`;
+  if (p.rtf != null) text += ` · RTF ${fmt(p.rtf)}`;
+  if (p.load_s >= 1) text += ` · + ${fmt(p.load_s)} s Modell laden`;
+  el.perf.innerHTML = text;
+  el.perf.append(" · " + p.voice + (p.int8 ? " (int8)" : ""));
 }
 
 /* ------------------------------------------------------- Konfiguration */
@@ -249,6 +272,7 @@ function collectConfig() {
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
+    qwen_int8: el.qwenInt8.checked,
   };
 }
 
@@ -278,6 +302,7 @@ function applyConfig(c) {
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
+  el.qwenInt8.checked = !!c.qwen_int8;
   updateSliderLabels();
   updateKeepaliveLabel();
 }
@@ -296,10 +321,11 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist,
+                     el.qwenInt8]) {
   input.addEventListener("change", saveConfig);
 }
-el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });
+el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; updateQwenRow(); });
 el.channel.addEventListener("change", setMediaSession);
 for (const slider of [el.volume, el.speed]) {
   slider.addEventListener("input", () => { updateSliderLabels(); saveConfig(); });
