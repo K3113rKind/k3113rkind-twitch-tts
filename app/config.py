@@ -45,8 +45,6 @@ DEFAULTS: dict[str, Any] = {
     # oder "eigen" mit freiem Text in qwen_style_custom)
     "qwen_style": "neutral",
     "qwen_style_custom": "",
-    # Klang-Nachbearbeitung für alle Stimmen: -1 hell/frisch … +1 warm/tief
-    "warmth": 0.0,
     # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
     # über "Umbenennen" gesetzt; leerer Name = Standardname.
     "voice_labels": {},
@@ -119,8 +117,6 @@ class ConfigStore:
                     continue
             elif key == "qwen_style_custom":
                 value = str(value).strip()[:300]
-            elif key == "warmth":
-                value = round(min(max(float(value), -1.0), 1.0), 2)
             elif key == "qwen_temperature":
                 value = round(min(max(float(value), 0.3), 1.2), 2)
             elif key == "keepalive_level":

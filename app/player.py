@@ -248,7 +248,6 @@ class ChatSpeaker:
         temperature = cfg["qwen_temperature"]
         style = cfg["qwen_style"]
         instruct = cfg["qwen_style_custom"] if style == "eigen" else QWEN_STYLES.get(style)
-        warmth = cfg["warmth"]
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
@@ -304,9 +303,9 @@ class ChatSpeaker:
             samples = result.samples
             # Qwen kennt kein Sprechtempo -> hier nachträglich (Kokoro regelt es selbst)
             tempo = speed if is_qwen(voice) else 1.0
-            if warmth or abs(tempo - 1.0) > 0.01:
+            if abs(tempo - 1.0) > 0.01:
                 samples = await asyncio.to_thread(
-                    klang.apply, samples, result.sample_rate, warmth, tempo
+                    klang.apply_tempo, samples, result.sample_rate, tempo
                 )
             if idx > 0:  # kurze Atempause zwischen den Abschnitten
                 import numpy as np
