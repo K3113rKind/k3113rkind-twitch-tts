@@ -302,8 +302,12 @@ class ChatSpeaker:
                 )
 
             samples = result.samples
-            if warmth:
-                samples = await asyncio.to_thread(klang.apply, samples, result.sample_rate, warmth)
+            # Qwen kennt kein Sprechtempo -> hier nachträglich (Kokoro regelt es selbst)
+            tempo = speed if is_qwen(voice) else 1.0
+            if warmth or abs(tempo - 1.0) > 0.01:
+                samples = await asyncio.to_thread(
+                    klang.apply, samples, result.sample_rate, warmth, tempo
+                )
             if idx > 0:  # kurze Atempause zwischen den Abschnitten
                 import numpy as np
 

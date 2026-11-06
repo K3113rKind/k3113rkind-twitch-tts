@@ -1,72 +1,76 @@
-"""Klang-Regler: fertige Sprache wärmer/tiefer oder heller/frischer machen.
+"""Nachbearbeitung der fertigen Sprache: Tempo und Klang (hell <-> warm).
 
-Reine Nachbearbeitung, funktioniert deshalb mit jeder Stimme (Kokoro, Qwen,
-eigene Stimmen). Wert von -1 bis +1:
+Läuft über ffmpeg mit Rubber Band (librubberband) – hochwertiges
+Time-Stretching und Pitch-Shifting, das bei Sprache deutlich sauberer klingt
+als ein einfacher Phasen-Vocoder (der erzeugte Echo/Hall).
 
-  +1  warm/tief:   Tonhöhe -2 Halbtöne, Tiefen +4 dB, Höhen -3 dB
-   0  unverändert
-  -1  hell/frisch: Tonhöhe +2 Halbtöne, Tiefen -3 dB, Höhen +3 dB
+  tempo   1.0 = unverändert, 0.6 = langsamer (Tonhöhe bleibt). Wird für Qwen
+          genutzt, das selbst kein Sprechtempo kennt; Kokoro regelt das selbst.
+  warmth  -1 hell/frisch … 0 neutral … +1 warm/tief:
+          Tonhöhe bis ±2 Halbtöne bei erhaltenen Formanten (klingt nach
+          derselben Person, nur tiefer/höher), dazu sanfte Tiefen/Höhen.
 
-Die Tonhöhe ändert sich ohne Tempoänderung (librosa, Phasen-Vocoder); stärker
-als ±2 Halbtöne klingt das schnell künstlich, deshalb die Grenze.
+Fehlt Rubber Band im ffmpeg, fällt das Tempo auf ffmpegs atempo zurück und
+die Tonhöhe bleibt unverändert.
 """
 
 from __future__ import annotations
 
 import logging
-import math
+import subprocess
+from functools import lru_cache
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 
 MAX_SEMITONES = 2.0
-_warned = False
 
 
-def _shelf(sr: int, freq: float, gain_db: float, high: bool):
-    """Biquad-Kuhfilter (RBJ Audio EQ Cookbook, Steilheit S=1)."""
-    a = 10 ** (gain_db / 40)
-    w0 = 2 * math.pi * freq / sr
-    cos, alpha = math.cos(w0), math.sin(w0) / 2 * math.sqrt(2)
-    sq = 2 * math.sqrt(a) * alpha
-    if high:
-        b = [a * ((a + 1) + (a - 1) * cos + sq), -2 * a * ((a - 1) + (a + 1) * cos),
-             a * ((a + 1) + (a - 1) * cos - sq)]
-        den = [(a + 1) - (a - 1) * cos + sq, 2 * ((a - 1) - (a + 1) * cos),
-               (a + 1) - (a - 1) * cos - sq]
-    else:
-        b = [a * ((a + 1) - (a - 1) * cos + sq), 2 * a * ((a - 1) - (a + 1) * cos),
-             a * ((a + 1) - (a - 1) * cos - sq)]
-        den = [(a + 1) + (a - 1) * cos + sq, -2 * ((a - 1) + (a + 1) * cos),
-               (a + 1) + (a - 1) * cos - sq]
-    return np.array(b) / den[0], np.array(den) / den[0]
-
-
-def apply(samples: np.ndarray, sr: int, warmth: float) -> np.ndarray:
-    global _warned
-    warmth = max(-1.0, min(1.0, float(warmth or 0.0)))
-    if abs(warmth) < 0.02 or len(samples) == 0:
-        return samples
-    from scipy.signal import lfilter
-
-    out = samples.astype(np.float32)
+@lru_cache(maxsize=1)
+def _has_rubberband() -> bool:
     try:
-        import librosa
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
+                             text=True, timeout=10).stdout
+        found = " rubberband " in out
+    except Exception:
+        found = False
+    log.info("Klang/Tempo: %s", "Rubber Band verfügbar" if found
+             else "kein Rubber Band im ffmpeg – Tempo über atempo, Tonhöhe bleibt unverändert")
+    return found
 
-        out = librosa.effects.pitch_shift(out, sr=sr, n_steps=-MAX_SEMITONES * warmth)
-    except Exception as exc:  # Klang soll nie die Ausgabe verhindern
-        if not _warned:
-            log.warning("Tonhöhe nicht änderbar (%s) – nur Klangfarbe wird angepasst", exc)
-            _warned = True
 
-    low_db = 4.0 * warmth if warmth > 0 else 3.0 * warmth
-    high_db = -3.0 * warmth
-    for freq, gain, high in ((250.0, low_db, False), (6000.0, high_db, True)):
-        b, a = _shelf(sr, freq, gain, high)
-        out = lfilter(b, a, out)
+def _filters(sr: int, warmth: float, tempo: float) -> list[str]:
+    chain = []
+    pitch = 2 ** (-MAX_SEMITONES * warmth / 12)
+    if _has_rubberband():
+        if abs(tempo - 1) > 0.01 or abs(pitch - 1) > 0.001:
+            chain.append(f"rubberband=tempo={tempo:.3f}:pitch={pitch:.4f}"
+                         ":formant=preserved:pitchq=quality:transients=smooth")
+    elif abs(tempo - 1) > 0.01:
+        chain.append(f"atempo={max(0.5, min(2.0, tempo)):.3f}")
+    if abs(warmth) >= 0.02:
+        low = 4.0 * warmth if warmth > 0 else 2.5 * warmth
+        high = -3.0 * warmth if warmth > 0 else -2.5 * warmth
+        chain.append(f"bass=g={low:.2f}:f=250:w=0.7,treble=g={high:.2f}:f=6000:w=0.7")
+    if chain:
+        chain.append("alimiter=limit=0.95:level=disabled")
+    return chain
 
-    peak = float(np.max(np.abs(out))) if len(out) else 0.0
-    if peak > 0.98:  # nach dem Anheben nicht übersteuern
-        out = out * (0.98 / peak)
-    return out.astype(np.float32)
+
+def apply(samples: np.ndarray, sr: int, warmth: float = 0.0, tempo: float = 1.0) -> np.ndarray:
+    warmth = max(-1.0, min(1.0, float(warmth or 0.0)))
+    tempo = max(0.5, min(2.0, float(tempo or 1.0)))
+    chain = _filters(sr, warmth, tempo)
+    if not chain or len(samples) == 0:
+        return samples
+    cmd = ["ffmpeg", "-loglevel", "error", "-f", "f32le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
+           "-af", ",".join(chain), "-f", "f32le", "-ar", str(sr), "-ac", "1", "pipe:1"]
+    try:
+        res = subprocess.run(cmd, input=samples.astype("<f4").tobytes(), capture_output=True,
+                             timeout=60, check=True)
+        out = np.frombuffer(res.stdout, dtype="<f4").astype(np.float32)
+        return out if len(out) else samples
+    except Exception as exc:  # Nachbearbeitung darf die Ausgabe nie verhindern
+        log.warning("Klang/Tempo nicht anwendbar (%s) – gebe unbearbeitet aus", exc)
+        return samples
