@@ -44,6 +44,27 @@ class QueuedMessage:
     batched: bool = False  # steckt in einer (laufenden/fertigen) Gruppenberechnung
 
 
+def _trim_silence(samples, sr: int, head: bool, tail: bool, keep_s: float = 0.05):
+    """Stille am Anfang/Ende abschneiden (Pegel unter 3 % des Maximums),
+    mit kurzem Rest, damit nichts hart abreißt."""
+    import numpy as np
+
+    if len(samples) == 0:
+        return samples
+    win = max(1, int(sr * 0.01))
+    n = len(samples) // win
+    if n < 3:
+        return samples
+    rms = np.sqrt(np.mean(samples[: n * win].reshape(n, win) ** 2, axis=1))
+    loud = np.nonzero(rms > 0.03 * (rms.max() or 1.0))[0]
+    if len(loud) == 0:
+        return samples
+    keep = int(sr * keep_s)
+    start = max(0, loud[0] * win - keep) if head else 0
+    end = min(len(samples), (loud[-1] + 1) * win + keep) if tail else len(samples)
+    return samples[start:end]
+
+
 class Broadcaster:
     """Tracks connected WebSocket UIs and broadcasts JSON messages."""
 
@@ -239,10 +260,21 @@ class ChatSpeaker:
         if not (is_qwen(voice) and self.tts.pool_active):
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
+        # Zuerst Nachrichten, bei denen der Anfang komplett fertig ist (bei
+        # abgetrennter Namensansage: Name UND erster Textabschnitt) – sonst
+        # entsteht nach "X sagt:" eine Lücke. Erst wenn keine so weit ist,
+        # eine, deren Name schon fertig ist (nach Chat-Pausen früherer Ton).
+        name_only = None
         for m in self._queue:
-            text = self._message_chunks(m, cfg, voice)[0]
-            if self.tts.has_result(text, voice, temperature, instruct):
+            chunks = self._message_chunks(m, cfg, voice)
+            head = chunks[:2] if self._is_name_chunk(chunks[0], m) and len(chunks) > 1 else chunks[:1]
+            ready = [self.tts.has_result(t, voice, temperature, instruct) for t in head]
+            if all(ready):
                 return m
+            if ready[0] and name_only is None:
+                name_only = m
+        if name_only is not None and not self._prefetch_tasks:
+            return name_only
         if self._prefetch_tasks:
             return None  # gleich ist etwas fertig
         # Nichts fertig und nichts in Arbeit (z. B. Fehler): älteste direkt rechnen
@@ -292,6 +324,11 @@ class ChatSpeaker:
         chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
                   if is_chunked(voice) else [text])
         return chunks or [text]
+
+    @staticmethod
+    def _is_name_chunk(chunk: str, msg: QueuedMessage) -> bool:
+        return not msg.raw and chunk.startswith(msg.username) and chunk.endswith(":") \
+            and len(chunk) <= len(msg.username) + 6
 
     def _message_chunks(self, msg: QueuedMessage, cfg, voice: str) -> list[str]:
         """Abschnitte einer Nachricht. Mit mehreren Rechenprozessen wird die
@@ -435,7 +472,13 @@ class ChatSpeaker:
                 )
 
             samples = result.samples
-            if idx > 0:  # kurze Atempause zwischen den Abschnitten
+            name_split = self._is_name_chunk(chunks[0], msg)
+            if name_split and idx == 0:
+                # Namensansage: Stille am Ende weg, der Text schließt direkt an
+                samples = _trim_silence(samples, result.sample_rate, head=False, tail=True)
+            elif name_split and idx == 1:
+                samples = _trim_silence(samples, result.sample_rate, head=True, tail=False)
+            elif idx > 0:  # kurze Atempause zwischen den Abschnitten
                 import numpy as np
 
                 pause = np.zeros(int(PAUSE_BETWEEN_CHUNKS_S * result.sample_rate), dtype=np.float32)
