@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Eigene Stimme für die Qwen-Stimmen erzeugen – fragt nach Quelle und Namen
 # und erledigt den Rest: YouTube-Ton laden, Musik entfernen, abschreiben,
-# besten 8–12-s-Abschnitt wählen, Referenz ablegen, Qwen-Base-Modelle laden.
+# besten Abschnitt wählen (Länge wählbar), Referenz ablegen, Base-Modelle laden.
 # Danach steht die Stimme im Dropdown ("NAME · eigene Stimme, Qwen …").
 #
 # Aufruf im Repo-Ordner:  bash tools/stimme-klonen.sh
@@ -26,10 +26,15 @@ while true; do
   [[ "$NAME" =~ ^[a-z0-9_-]+$ ]] && break
   echo "Bitte nur a-z, 0-9, - und _."
 done
+while true; do
+  read -rp "Länge der Referenz in Sekunden [10] (mehr = näher am Original, aber langsamer): " REF_SEKUNDEN
+  REF_SEKUNDEN=${REF_SEKUNDEN:-10}
+  [[ "$REF_SEKUNDEN" =~ ^[0-9]+$ ]] && [ "$REF_SEKUNDEN" -ge 5 ] && [ "$REF_SEKUNDEN" -le 30 ] && break
+  echo "Bitte eine ganze Zahl von 5 bis 30."
+done
 if [ -f "$REF_DIR/$NAME.wav" ]; then
   read -rp "Stimme '$NAME' gibt es schon – überschreiben? [j/N] " OK
   [[ "$OK" =~ ^[jJyY]$ ]] || exit 1
-  rm -rf "${WORK_DIR:?}/$NAME"
 fi
 
 # Lokale Datei in den Container reichen
@@ -43,7 +48,7 @@ fi
 # Torch 2.5.1 (CPU) bewusst fest: Demucs speichert über torchaudio.save, das
 # in neueren torchaudio-Versionen umgebaut wurde.
 docker run --rm -it \
-  -e QUELLE="$QUELLE" -e NAME="$NAME" -e WHISPER_MODEL \
+  -e QUELLE="$QUELLE" -e NAME="$NAME" -e REF_SEKUNDEN="$REF_SEKUNDEN" -e WHISPER_MODEL \
   -e HF_HOME=/hf -e TORCH_HOME=/cache/torch \
   -v "$HF_DIR":/hf -v "$REF_DIR":/ref -v "$WORK_DIR":/arbeit \
   -v "$CACHE_DIR":/cache -v "$CACHE_DIR/pip":/root/.cache/pip \

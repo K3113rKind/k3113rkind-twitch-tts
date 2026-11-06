@@ -4,12 +4,13 @@ Läuft im Wegwerf-Container aus tools/stimme-klonen.sh:
   1. Ton holen (YouTube-Adresse per yt-dlp, oder Datei unter /quelle)
   2. Stimme von Musik trennen (Demucs htdemucs)
   3. Mit Wort-Zeitstempeln abschreiben (faster-whisper)
-  4. Besten Abschnitt von 8–12 s automatisch wählen: möglichst an Satz-
+  4. Besten Abschnitt der gewünschten Länge (Standard 10 s, ±2 s) wählen: an Satz-
      grenzen, ohne lange Pausen, mit sicher erkannten Wörtern
   5. NAME.wav (24 kHz mono) + NAME.txt in den Referenzordner schreiben
   6. Qwen-Base-Modelle in den Hugging-Face-Cache laden, falls sie fehlen
 """
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -21,11 +22,16 @@ from pathlib import Path
 SRC = os.environ["QUELLE"].strip()
 NAME = os.environ["NAME"].strip()
 REF_DIR = Path("/ref")
-WORK = Path("/arbeit") / NAME
+# Zwischenstand (Download, freigestellte Stimme) hängt an der Quelle, nicht am
+# Namen: Mehrere Varianten aus demselben Video gehen dann ohne neuen Download.
+WORK = Path("/arbeit") / hashlib.sha1(SRC.encode()).hexdigest()[:12]
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
 BASE_MODELS = ["Qwen/Qwen3-TTS-12Hz-0.6B-Base", "Qwen/Qwen3-TTS-12Hz-1.7B-Base"]
 
-MIN_S, MAX_S, IDEAL_S = 8.0, 12.0, 10.0
+# Gewünschte Referenzlänge (REF_SEKUNDEN), erlaubt ±2 s. Länger kann die
+# Betonung näher ans Original bringen, macht aber jeden Satz etwas langsamer.
+IDEAL_S = float(os.environ.get("REF_SEKUNDEN", "10").replace(",", ".") or 10)
+MIN_S, MAX_S = max(IDEAL_S - 2, 3.0), IDEAL_S + 2
 PAD_S = 0.15  # Luft vor/nach dem Abschnitt, damit nichts abgeschnitten klingt
 
 
@@ -173,7 +179,7 @@ if window is None:
     if total < MIN_S:
         print(f"Es gibt nur {total:.1f} s Sprache – das wird komplett verwendet (ab 3 s klappt es meist).")
     else:
-        print("Kein Abschnitt passt sauber – nehme die ersten Wörter bis maximal 12 s.")
+        print(f"Kein Abschnitt passt sauber – nehme die ersten Wörter bis maximal {MAX_S:.0f} s.")
     j = max(k for k in range(len(words)) if words[k].end - words[0].start <= MAX_S) if total >= MIN_S else len(words) - 1
     window = (0, j)
 cut(vocals, words, *window)
