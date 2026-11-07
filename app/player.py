@@ -32,9 +32,10 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 SHORT_CHARS = 60
 # Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
 NAME_SPLIT_MIN_CHARS = 25
-# Mehrere Rechenprozesse: so viele Abschnitte eines langen Textes rechnen
-# gleichzeitig (der Reihe nach; die übrigen Prozesse bleiben für den Chat frei)
-CHUNK_LOOKAHEAD = 2
+# Mehrere Rechenprozesse: lange Texte satzweise (Abschnitte bis zu dieser
+# Länge, an Satzenden geteilt) und versetzt gestartet – wie Chat-Nachrichten
+SENTENCE_CHUNK_CHARS = 180
+CHUNK_STAGGER_S = 2.0
 
 log = logging.getLogger(__name__)
 
@@ -319,6 +320,9 @@ class ChatSpeaker:
 
     def _chunks(self, text: str, voice: str) -> list[str]:
         limit = chunk_chars(voice)
+        if not limit and is_chunked(voice) and self.tts.parallel(voice):
+            # Mehrere Rechenprozesse: satzweise (wie einzelne Chat-Nachrichten)
+            limit = SENTENCE_CHUNK_CHARS
         if not is_chunked(voice):
             chunks = [text]
         elif limit:
@@ -437,22 +441,32 @@ class ChatSpeaker:
         t_start = time.perf_counter()
         first_audio_s = None
         utterance_id = None
-        # Mehrere Rechenprozesse: alle Abschnitte gleichzeitig anstoßen
-        # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
-        # nächsten, während der aktuelle spielt.
-        # Mehrere Rechenprozesse: höchstens LOOKAHEAD Abschnitte gleichzeitig,
-        # der Reihe nach. Alle auf einmal zu starten teilt die Kerne auf zu
-        # viele Abschnitte auf – jeder wird langsam fertig, und nach jedem Satz
-        # entsteht eine Pause. Ohne Rechenprozesse: immer nur der nächste.
-        ahead = CHUNK_LOOKAHEAD if self.tts.parallel(voice) else 1
-        pendings = [synth(c) for c in chunks[:ahead]]
+        # Mehrere Rechenprozesse: lange Texte laufen wie ein Chat – jeder
+        # Satz ist ein eigener Auftrag, und die Aufträge starten leicht
+        # versetzt (CHUNK_STAGGER_S), so wie Chat-Nachrichten nacheinander
+        # eintreffen. Die Sätze werden so nacheinander fertig statt alle
+        # gleichzeitig spät. Gespielt wird der Reihe nach. Ohne
+        # Rechenprozesse: immer nur der nächste, während der aktuelle spielt.
+        parallel = self.tts.parallel(voice)
+
+        def staggered(i: int, chunk: str):
+            async def run():
+                if i:
+                    await asyncio.sleep(i * CHUNK_STAGGER_S)
+                return await synth(chunk)
+            return asyncio.ensure_future(run())
+
+        pendings = ([staggered(i, c) for i, c in enumerate(chunks)] if parallel
+                    else [synth(chunks[0])])
         skipped = False
 
         for idx in range(len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
+                for rest in pendings[idx + 1:]:
+                    rest.cancel()  # noch nicht gestartete Sätze verwerfen
                 break
-            if len(pendings) < len(chunks):
+            if not parallel and len(pendings) < len(chunks):
                 pendings.append(synth(chunks[len(pendings)]))
 
             totals["compute"] += result.compute_seconds
