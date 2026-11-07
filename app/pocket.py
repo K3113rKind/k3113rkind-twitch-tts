@@ -129,8 +129,16 @@ class PocketEngine:
         if model is not None:
             return model
         TTSModel = _import_pocket()
-        params = dict(language=language, temp=POCKET_TEMP, sampler_decode_steps=POCKET_STEPS,
-                      eos_threshold=POCKET_EOS)
+        # Nur ausdrücklich gesetzte Werte übergeben – sonst exakt der Aufruf wie
+        # vorher. Die veröffentlichte Version verträgt z. B. None nicht als
+        # "Standard" (ergab Kauderwelsch).
+        params: dict = {"language": language}
+        if POCKET_TEMP is not None:
+            params["temp"] = POCKET_TEMP
+        if POCKET_EOS is not None:
+            params["eos_threshold"] = POCKET_EOS
+        if POCKET_STEPS != 1:
+            params["sampler_decode_steps"] = POCKET_STEPS
         try:
             model = TTSModel.load_model(**params)
         except Exception as exc:  # nicht im Cache -> herunterladen

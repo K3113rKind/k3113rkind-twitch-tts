@@ -618,8 +618,9 @@ class TTS:
             from .pocket import POCKET_PARAMS
 
             # Qwen-Temperatur gilt hier nicht – dafür Pockets eigene Einstellungen
-            # (Standardwerte -> wie bisher, vorhandener Zwischenspeicher bleibt gültig)
-            temperature = None if POCKET_PARAMS == (1, None, None, False) else ("pocket",) + POCKET_PARAMS
+
+            # "v2": Ergebnisse aus der fehlerhaften Fassung (Kauderwelsch) verwerfen
+            temperature = ("pocket-v2",) + POCKET_PARAMS
         elif voices_mod.is_ext(voice_key):
             temperature = None  # nutzen weder Temperatur noch Anweisung
         return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
