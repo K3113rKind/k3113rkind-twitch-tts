@@ -105,6 +105,7 @@ def _status() -> dict:
         "error": state["error"],
         "voices": available_voices(config.get("voice_labels"), config.get("voice_visibility")),
         "queue_size": speaker.queue_size,
+        "test_active": speaker.test_active,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
         "last_perf": speaker.last_perf,
@@ -291,6 +292,13 @@ async def say_cancel():
 async def warmup_on_start():
     """Gewählte Qwen-Stimme gleich nach dem Start laden und auf der GPU
     aufwärmen (QWEN_WARMUP=0 schaltet das ab)."""
+    # Jeder Abschnitt wartet in einem eigenen Thread auf einen freien
+    # Rechenprozess. Der Standard-Threadpool (32) war bei langen Texten voll –
+    # andere Aufrufe (Stimmenliste, Laden) standen dann dahinter an.
+    from concurrent.futures import ThreadPoolExecutor
+
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=int(os.environ.get("APP_THREADS", "128") or 128)))
     if os.environ.get("QWEN_WARMUP", "1") == "0":
         return
     asyncio.create_task(asyncio.to_thread(tts.warmup, config.get("voice")))

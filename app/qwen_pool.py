@@ -235,11 +235,17 @@ class QwenPool:
         self._inqs[i], self._procs[i] = q, p
 
     def _reader(self) -> None:
+        last_check = time.monotonic()
         while not self._closed:
+            # Abgestürzte Prozesse regelmäßig suchen – auch wenn die anderen
+            # laufend Ergebnisse liefern (vorher nur bei 2 s Funkstille: im
+            # vollen Chat hing der Auftrag eines abgestürzten Prozesses ewig).
+            if time.monotonic() - last_check >= 2:
+                self._check_dead()
+                last_check = time.monotonic()
             try:
                 jid, ok, payload = self._outq.get(timeout=2)
             except queue.Empty:
-                self._check_dead()
                 continue
             except (EOFError, OSError):
                 return

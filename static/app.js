@@ -258,6 +258,8 @@ function applyStatus(s) {
   el.startstop.textContent = s.running ? "Vorlesen stoppen" : "Vorlesen starten";
   el.startstop.classList.toggle("running", s.running);
   running = s.running;
+  // Rückfall: "fertig" über die WebSocket verpasst (z. B. Verbindung kurz weg)
+  if (testActive && s.test_active === false && Date.now() - testSince > 4000) endTestText();
   updateSkipButton();
   updateSayButton();
   fillVoices(s.voices || []);
@@ -532,6 +534,7 @@ el.startstop.addEventListener("click", async () => {
 // Testtext nur, wenn der Chat nicht vorgelesen wird
 let sayBusy = false;
 let testActive = false;  // Testtext wird erzeugt/gespielt -> Knopf gesperrt
+let testSince = 0;
 function endTestText() {
   if (!testActive) return;
   testActive = false;
@@ -550,6 +553,10 @@ el.sayBtn.addEventListener("click", async () => {
   if (running) return;
   ensureAudio(); // Nutzer-Geste: löst die Autoplay-Sperre des Browsers
   sayBusy = true;
+  // schon vor der Anfrage: ein sehr schnelles "fertig"/"Fehler" vom Server
+  // käme sonst vor der Antwort an und der Knopf bliebe gesperrt
+  testActive = true;
+  testSince = Date.now();
   updateSayButton();
   try {
     // Aktuelle Stimme/Geschwindigkeit sofort speichern, nicht erst nach 300 ms
@@ -568,15 +575,16 @@ el.sayBtn.addEventListener("click", async () => {
       const body = await res.json().catch(() => ({}));
       showError(body.detail || res.statusText);
       sayBusy = false;
+      testActive = false;
     } else {
       hideError();
-      testActive = true;  // gesperrt bis "fertig", "abgebrochen" oder Fehler
-      // sofort Rückmeldung, bis der Server "Erzeuge Sprache" meldet
+      // gesperrt bis "fertig", "abgebrochen" oder Fehler; sofort Rückmeldung, bis der Server "Erzeuge Sprache" meldet
       if (!genTimer && !speaking) showGenerating({ username: "Test", text });
     }
   } catch (e) {
     showError("Vorlesen fehlgeschlagen: " + e);
     sayBusy = false;
+    testActive = false;
   } finally {
     updateSayButton();
   }

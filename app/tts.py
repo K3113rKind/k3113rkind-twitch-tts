@@ -228,7 +228,11 @@ class DiskCache:
             data = np.load(path)
             os.utime(path)  # zuletzt benutzt -> fliegt als Letztes raus
             return data.astype(np.float32) / 32767.0
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return None
+        except Exception as exc:  # kaputte Datei (z. B. Absturz beim Schreiben) -> neu rechnen
+            log.warning("Zwischenspeicher: %s unlesbar (%s) – wird neu berechnet", path.name, exc)
+            path.unlink(missing_ok=True)
             return None
 
     def put(self, key: tuple, samples) -> None:
@@ -239,8 +243,10 @@ class DiskCache:
         path = self._path(key)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp.npy")
-            np.save(tmp, (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16))
+            # eigener Name je Thread: gleicher Text kann parallel fertig werden
+            tmp = path.with_name(f"{path.stem}.{threading.get_ident()}.tmp")
+            with open(tmp, "wb") as fh:
+                np.save(fh, (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16))
             os.replace(tmp, path)
         except OSError as exc:
             log.warning("Zwischenspeicher: Schreiben fehlgeschlagen: %s", exc)
@@ -248,10 +254,19 @@ class DiskCache:
         with self._lock:
             self._puts += 1
             if self._puts % 50 == 0:
-                self._prune()
+                try:  # Aufräumen darf das Ergebnis nie kosten
+                    self._prune()
+                except Exception as exc:
+                    log.warning("Zwischenspeicher: Aufräumen fehlgeschlagen: %s", exc)
 
     def _prune(self) -> None:
-        files = [(f.stat().st_mtime, f.stat().st_size, f) for f in self.folder.glob("*/*.npy")]
+        files = []
+        for f in self.folder.glob("*/*.npy"):
+            try:
+                st = f.stat()
+            except OSError:
+                continue  # gerade ersetzt/gelöscht
+            files.append((st.st_mtime, st.st_size, f))
         total = sum(size for _, size, _ in files)
         if total <= self.max_bytes:
             return
@@ -549,74 +564,6 @@ class QwenEngine:
         return samples
 
 
-    def synthesize_batch(self, texts: list[str], repo_id: str, speaker: str | None = None,
-                         ref_wav: str | None = None, ref_txt: str | None = None,
-                         temperature: float | None = None, instruct: str | None = None):
-        """Mehrere kurze Texte in EINEM Durchlauf erzeugen. Auf der CPU kostet
-        ein Schritt für 8 Texte kaum mehr als für einen (Verwaltungsaufwand
-        statt Rechenleistung bremst) – der Durchsatz steigt entsprechend.
-        Liefert [(samples, Stimm-Ähnlichkeit oder None)], Rechenzeit."""
-        import numpy as np
-        import torch
-
-        self.load(repo_id)
-        n = len(texts)
-        budget = max(_qwen_token_budget(t) for t in texts)
-        with self._lock:
-            trim = 0
-            prompt = None
-            if ref_wav:
-                prompt = self._clone_prompt(ref_wav, ref_txt)
-                ref_code = getattr(prompt[0], "ref_code", None) if prompt else None
-                if QWEN_REF_DECODE_S > 0 and ref_code is not None:
-                    trim = max(0, int(ref_code.shape[0])
-                               - int(QWEN_REF_DECODE_S * QWEN_STEPS_PER_SECOND))
-                gen = lambda: self._model.generate_voice_clone(  # noqa: E731
-                    text=[_qwen_text(t) for t in texts], language=["German"] * n,
-                    voice_clone_prompt=list(prompt) * n,
-                    max_new_tokens=budget, temperature=temperature,
-                )
-            else:
-                kwargs = {"instruct": [instruct] * n} if instruct else {}
-                gen = lambda: self._model.generate_custom_voice(  # noqa: E731
-                    text=[_qwen_text(t) for t in texts], language=["German"] * n,
-                    speaker=[speaker] * n, max_new_tokens=budget,
-                    temperature=temperature, **kwargs,
-                )
-            self._decode_s = 0.0
-            t0 = time.perf_counter()
-            self._trim_codes = trim
-            try:
-                torch.manual_seed(QWEN_SEED)
-                try:
-                    wavs, sr = gen()
-                except Exception as exc:
-                    if not self._compiled:
-                        raise
-                    self._uncompile(exc)
-                    torch.manual_seed(QWEN_SEED)
-                    wavs, sr = gen()
-            finally:
-                self._trim_codes = 0
-            took = time.perf_counter() - t0
-            out = []
-            for wav in wavs:
-                wav = np.asarray(wav, dtype=np.float32)
-                if trim:  # Auffüll-Stille der Referenz entfernen
-                    wav = np.trim_zeros(wav, "f")
-                sim = (self._speaker_similarity(prompt[0], wav, int(sr))
-                       if prompt and QWEN_SPK_MIN > 0 else None)
-                audio = _resample(wav, int(sr), SAMPLE_RATE)
-                audio = np.concatenate([audio, np.zeros(int(0.15 * SAMPLE_RATE), dtype=np.float32)])
-                out.append((audio, sim))
-        dur = sum(len(a) for a, _ in out) / SAMPLE_RATE
-        sims = " ".join("–" if sim is None else f"{sim:.2f}" for _, sim in out)
-        log.info("Qwen %s Gruppe: %d Nachrichten, %.1f s Rechenzeit für %.1f s Audio (RTF %.2f), "
-                 "Stimm-Ähnlichkeit: %s", repo_id.split("-12Hz-")[-1], n, took, dur,
-                 took / dur if dur else 0.0, sims)
-        return out, took
-
-
 WARMUP_TEXTS = [
     "Hallo.",
     "Das ist ein kurzer Satz zum Aufwärmen.",
@@ -791,12 +738,21 @@ class TTS:
                 self._inflight.pop(key, None)
             event.set()
 
+    def _remember_locked(self, key: tuple, samples) -> None:
+        """Ergebnis im RAM-Zwischenspeicher ablegen (Aufrufer hält _batch_lock)."""
+        self._qwen_cache[key] = samples
+        self._qwen_cache.move_to_end(key)
+        while len(self._qwen_cache) > QWEN_CACHE_SIZE:
+            self._qwen_cache.popitem(last=False)
+
     def forget_clone(self, name: str) -> None:
         """Nach dem Löschen einer eigenen Stimme: vorberechnete Referenz und
         zwischengespeicherte Sätze aus dem RAM werfen."""
         keys = voices_mod.clone_keys(name)
-        for key in [k for k in list(self._qwen_cache) if k[0] in keys]:
-            self._qwen_cache.pop(key, None)
+        with self._batch_lock:
+            for store in (self._qwen_cache, self._prefetched):
+                for key in [k for k in list(store) if k[0] in keys]:
+                    store.pop(key, None)
         self._pocket.forget(str(voices_mod.ref_dir() / f"{name}.wav"))
         prompts = self._qwen._clone_prompts
         for key in [k for k in prompts if Path(k[1]).stem == name]:
@@ -1058,41 +1014,46 @@ class TTS:
             # Referenz – wird sie neu erzeugt oder der Text korrigiert, gilt der
             # alte Eintrag nicht mehr.
             key = self._qwen_key(voice_key, spec, temperature, instruct, text)
-            # Läuft für diesen Text gerade eine Gruppenberechnung? Dann darauf
-            # warten statt doppelt zu rechnen – und das Ergebnis abholen.
-            with self._batch_lock:
-                event = self._inflight.get(key)
-            if event is not None:
+            # Läuft für diesen Text gerade eine Berechnung (Vorab oder ein
+            # anderer Abschnitt mit gleichem Text)? Dann darauf warten statt
+            # doppelt zu rechnen. Alles unter _batch_lock – synthesize läuft in
+            # mehreren Threads gleichzeitig.
+            while True:
+                with self._batch_lock:
+                    event = self._inflight.get(key)
+                    if event is None:
+                        ready = self._prefetched.pop(key, None)
+                        if ready is not None:
+                            self._remember_locked(key, ready.samples)
+                            return ready
+                        samples = self._qwen_cache.get(key)
+                        if samples is not None:
+                            self._qwen_cache.move_to_end(key)
+                            return SynthesisResult(
+                                samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+                                sample_rate=SAMPLE_RATE, cached=True,
+                            )
+                        mine = self._inflight[key] = threading.Event()
+                        break
                 event.wait()
-            with self._batch_lock:
-                ready = self._prefetched.pop(key, None)
-            if ready is not None:
-                self._qwen_cache[key] = ready.samples
-                while len(self._qwen_cache) > QWEN_CACHE_SIZE:
-                    self._qwen_cache.popitem(last=False)
-                return ready
-            if key in self._qwen_cache:
-                self._qwen_cache.move_to_end(key)
-                samples = self._qwen_cache[key]
-                return SynthesisResult(
-                    samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
-                    sample_rate=SAMPLE_RATE, cached=True,
-                )
-            samples = self._disk.get(key)
-            if samples is not None:
-                self._qwen_cache[key] = samples
-                while len(self._qwen_cache) > QWEN_CACHE_SIZE:
-                    self._qwen_cache.popitem(last=False)
-                return SynthesisResult(
-                    samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
-                    sample_rate=SAMPLE_RATE, cached=True,
-                )
-            result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
-            self._disk.put(key, result.samples)
-            self._qwen_cache[key] = result.samples
-            while len(self._qwen_cache) > QWEN_CACHE_SIZE:
-                self._qwen_cache.popitem(last=False)
-            return result
+            try:
+                samples = self._disk.get(key)
+                if samples is not None:
+                    with self._batch_lock:
+                        self._remember_locked(key, samples)
+                    return SynthesisResult(
+                        samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+                        sample_rate=SAMPLE_RATE, cached=True,
+                    )
+                result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
+                self._disk.put(key, result.samples)
+                with self._batch_lock:
+                    self._remember_locked(key, result.samples)
+                return result
+            finally:
+                with self._batch_lock:
+                    self._inflight.pop(key, None)
+                mine.set()
 
         t_load = time.perf_counter()
         cache_key = (spec["backbone"], spec["lang"])

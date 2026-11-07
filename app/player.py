@@ -229,6 +229,12 @@ class ChatSpeaker:
     def queue_size(self) -> int:
         return len(self._queue)
 
+    @property
+    def test_active(self) -> bool:
+        """Läuft oder wartet ein Testtext? (Rückfall für die GUI, falls ein
+        "done" über die WebSocket verloren ging.)"""
+        return self._current_raw or any(m.raw for m in self._queue)
+
     async def _push_queue_state(self) -> None:
         await self.broadcaster.send({"type": "queue", "size": len(self._queue)})
 
@@ -248,10 +254,15 @@ class ChatSpeaker:
                     self._announced = head
                     await self.broadcaster.send(
                         {"type": "generating", "username": head.username, "text": head.text})
-                if self._prefetch_tasks:
-                    await asyncio.wait(set(self._prefetch_tasks),
-                                       return_when=asyncio.FIRST_COMPLETED)
+                # Aufwachen, wenn eine Berechnung fertig ist ODER eine neue
+                # Nachricht kommt (deren Ton evtl. schon im Zwischenspeicher liegt)
+                self._queue_event.clear()
+                waiter = asyncio.ensure_future(self._queue_event.wait())
+                await asyncio.wait({waiter, *self._prefetch_tasks},
+                                   return_when=asyncio.FIRST_COMPLETED)
+                waiter.cancel()
                 continue
+            self._current_raw = msg.raw  # lückenlos für test_active
             self._queue.remove(msg)
             await self._push_queue_state()
             try:
@@ -289,10 +300,12 @@ class ChatSpeaker:
     async def cancel_test(self) -> None:
         """Testtexte abbrechen: wartende aus der Queue nehmen, laufenden stoppen.
         Twitch-Nachrichten bleiben unberührt."""
+        before = len(self._queue)
         self._queue = deque(m for m in self._queue if not m.raw)
         if self._current_raw:
             self._skip.set()
-        else:  # nur wartende entfernt -> Oberfläche (Vorlesen-Knopf) freigeben
+        elif len(self._queue) < before:
+            # nur wartende entfernt -> Oberfläche (Vorlesen-Knopf) freigeben
             await self.broadcaster.send({"type": "stop_audio"})
         await self._push_queue_state()
 
@@ -480,7 +493,9 @@ class ChatSpeaker:
             push_progress()
 
         if needed > 1:
-            _done, skipped = await self._wait_or_skip(asyncio.gather(*pendings[:needed]))
+            # wait statt gather: ein fehlerhafter Abschnitt bricht den Vorrat
+            # nicht ab – der Fehler kommt erst, wenn er an der Reihe ist
+            _done, skipped = await self._wait_or_skip(asyncio.wait(pendings[:needed]))
 
         for idx in range(0 if skipped else len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
