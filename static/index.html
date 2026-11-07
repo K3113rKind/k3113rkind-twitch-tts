@@ -119,6 +119,14 @@
       <input id="speed" type="range" min="0.5" max="2" step="0.05" value="1">
       <span id="speed-note" class="muted hidden"></span>
     </label>
+    <label id="tempo-row" class="hidden">Tempo-Verfahren (eigene Qwen-Stimme)
+      <select id="qwen_tempo">
+        <option value="auto">Pausen + PSOLA (empfohlen)</option>
+        <option value="pausen">nur Pausen (Laute unverändert)</option>
+        <option value="psola">nur PSOLA</option>
+        <option value="atempo">atempo (bisher)</option>
+      </select>
+    </label>
 
     <label class="check">
       <input id="read_username" type="checkbox" checked>
@@ -213,6 +221,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=38"></script>
+<script src="/static/app.js?v=39"></script>
 </body>
 </html>

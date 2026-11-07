@@ -46,6 +46,8 @@ DEFAULTS: dict[str, Any] = {
     # oder "eigen" mit freiem Text in qwen_style_custom)
     "qwen_style": "neutral",
     "qwen_style_custom": "",
+    # Sprechtempo eigener Qwen-Stimmen: Verfahren (siehe klang.METHODS)
+    "qwen_tempo": "auto",
     # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
     # über "Umbenennen" gesetzt; leerer Name = Standardname.
     "voice_labels": {},
@@ -144,6 +146,12 @@ class ConfigStore:
             elif key == "qwen_style":
                 value = str(value).strip()
                 if value not in QWEN_STYLES and value != "eigen":
+                    continue
+            elif key == "qwen_tempo":
+                from .klang import METHODS
+
+                value = str(value).strip()
+                if value not in METHODS:
                     continue
             elif key == "qwen_style_custom":
                 value = str(value).strip()[:300]
