@@ -191,6 +191,10 @@
     <label class="file-row">oder Datei hochladen <span class="muted">(.wav, .mp3, …)</span>
       <input id="clone-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.flac,.mp4,.webm,.mkv,audio/*,video/*">
     </label>
+    <div class="actions">
+      <button id="clone-rec" type="button" class="btn-secondary">🎙 12 Sekunden aufnehmen</button>
+      <span id="clone-rec-info" class="muted">Mikrofon des Geräts – wird direkt als neue Stimme „aufnahmeNN“ erstellt</span>
+    </div>
     <div class="cols">
       <label>Name der Stimme <span class="req">*</span>
         <input id="clone-name" type="text" placeholder="z. B. candy" maxlength="40" autocomplete="off" spellcheck="false" required>
@@ -221,6 +225,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=39"></script>
+<script src="/static/app.js?v=40"></script>
 </body>
 </html>

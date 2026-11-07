@@ -698,6 +698,97 @@ async function startClone(overwrite = false) {
 }
 
 el.cloneStart.addEventListener("click", () => startClone(false));
+// ------------------------------------------- Aufnahme vom Gerätemikrofon
+// 12 s aufnehmen und sofort als neue Stimme "aufnahmeNN" erstellen
+// (umbenennen geht danach in der Stimmenliste). Browser erlauben das
+// Mikrofon nur über HTTPS (oder localhost).
+const REC_SECONDS = 12;
+const recBtn = document.getElementById("clone-rec");
+const recInfo = document.getElementById("clone-rec-info");
+
+async function nextRecordingName() {
+  const list = await fetch("/api/clone/voices").then((r) => r.json()).catch(() => []);
+  let max = 0;
+  for (const v of list || []) {
+    const m = /^aufnahme(\d+)$/.exec(v.name);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return "aufnahme" + String(max + 1).padStart(2, "0");
+}
+
+function recorderType() {
+  if (!window.MediaRecorder) return null;
+  for (const t of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]) {
+    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";  // Browser-Standard
+}
+
+async function submitRecording(blob, ext) {
+  const name = await nextRecordingName();
+  const form = new FormData();
+  form.append("name", name);
+  form.append("seconds", String(REC_SECONDS - 2));  // Vorlage etwas kürzer: Anfang/Ende frei wählbar
+  form.append("overwrite", "false");
+  form.append("file", blob, `aufnahme${ext}`);
+  el.cloneStart.disabled = true;
+  el.cloneResult.classList.add("hidden");
+  el.cloneResult.dataset.name = "";
+  const res = await fetch("/api/clone", { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    showError(body.detail === "EXISTS" ? `„${name}“ gibt es schon.` : (body.detail || res.statusText));
+    el.cloneStart.disabled = false;
+    return;
+  }
+  hideError();
+  recInfo.textContent = `Aufnahme hochgeladen – Stimme „${name}“ wird erstellt …`;
+  showCloneStatus(await res.json().catch(() => ({ running: true, name, log: [] })));
+  if (!clonePoll) clonePoll = setInterval(pollClone, 1500);
+}
+
+recBtn.addEventListener("click", async () => {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showError("Mikrofon-Aufnahme geht im Browser nur über HTTPS. Alternative: mit der Sprachmemos-App " +
+              "aufnehmen und oben unter „Datei hochladen“ auswählen.");
+    return;
+  }
+  const type = recorderType();
+  if (type === null) { showError("Dieser Browser kann nicht aufnehmen (MediaRecorder fehlt)."); return; }
+  let stream;
+  try {
+    // Rohsignal: keine Rauschunterdrückung/Pegelautomatik – die verfälschen die Stimme
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+    });
+  } catch (e) {
+    showError("Kein Zugriff aufs Mikrofon: " + (e.message || e));
+    return;
+  }
+  hideError();
+  const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const parts = [];
+  rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) parts.push(ev.data); };
+  rec.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    recBtn.disabled = false;
+    recBtn.textContent = "🎙 12 Sekunden aufnehmen";
+    const mime = rec.mimeType || type || "audio/webm";
+    const ext = mime.includes("mp4") ? ".m4a" : mime.includes("ogg") ? ".ogg" : ".webm";
+    submitRecording(new Blob(parts, { type: mime }), ext);
+  };
+  recBtn.disabled = true;
+  rec.start();
+  let left = REC_SECONDS;
+  recBtn.textContent = `● Aufnahme … ${left} s`;
+  recInfo.textContent = "Jetzt sprechen – ruhig und deutlich, ganze Sätze.";
+  const timer = setInterval(() => {
+    left -= 1;
+    if (left > 0) recBtn.textContent = `● Aufnahme … ${left} s`;
+    else { clearInterval(timer); rec.stop(); }
+  }, 1000);
+});
+
 // Name: nur erlaubte Zeichen (klein, ohne Leerzeichen)
 el.cloneName.addEventListener("input", () => {
   el.cloneName.value = el.cloneName.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
