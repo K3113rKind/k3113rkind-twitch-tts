@@ -22,7 +22,7 @@ from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .tts import TTS
-from .voices import VOICES, available_voices, is_available
+from .voices import available_voices, is_available, lang_of
 
 log = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ class ChatSpeaker:
         if cfg["read_username"]:
             if cfg["username_style"] == "sagt":
                 # Verb passend zur Sprache der gewählten Stimme
-                verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
+                verb = "sagt" if lang_of(voice) == "d" else "says"
                 text = f"{msg.username} {verb} {msg.text}"
             else:
                 text = f"{msg.username}: {msg.text}"

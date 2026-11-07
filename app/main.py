@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import remote
 from .config import ConfigStore
 from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
@@ -29,6 +30,7 @@ tts = TTS()
 broadcaster = Broadcaster()
 audio_stream = AudioStream(config)
 speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
+remote.REGISTRY = remote_voices = remote.RemoteVoices(config)
 
 state: dict = {"twitch": None, "error": None, "loading": False}
 
@@ -63,23 +65,61 @@ def _status() -> dict:
         "loading": state["loading"],
         "error": state["error"],
         "voices": available_voices(),
+        "remote": remote_voices.status(),
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
     }
 
 
+def _public_config() -> dict:
+    """Konfiguration für die GUI – der Freigabe-Schlüssel wird nie ausgeliefert."""
+    data = config.as_dict()
+    data["remote_token_set"] = bool(data.pop("remote_token", ""))
+    return data
+
+
 @app.get("/api/config")
 async def get_config():
-    return config.as_dict()
+    return _public_config()
 
 
 @app.put("/api/config")
 async def put_config(changes: dict):
+    before = (config.get("remote_url"), config.get("remote_token"))
     try:
-        return config.update(changes)
+        config.update(changes)
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Ungültiger Wert: {exc}")
+    if (config.get("remote_url"), config.get("remote_token")) != before:
+        await _refresh_remote()
+    return _public_config()
+
+
+async def _refresh_remote() -> dict:
+    status = await asyncio.to_thread(remote_voices.refresh)
+    await broadcaster.send({"type": "status", **_status()})
+    return status
+
+
+@app.post("/api/remote/refresh")
+async def remote_refresh():
+    """Freigegebene Stimmen der Test-Instanz jetzt neu abfragen."""
+    return await _refresh_remote()
+
+
+@app.on_event("startup")
+async def remote_poll():
+    async def loop():
+        while True:
+            if remote_voices.enabled():
+                try:
+                    await _refresh_remote()
+                except Exception as exc:  # nie die Schleife verlieren
+                    log.warning("Entfernte Stimmen: %s", exc)
+            await asyncio.sleep(remote.REFRESH_SECONDS)
+
+    asyncio.create_task(loop())
 
 
 @app.get("/api/status")

@@ -18,12 +18,25 @@ from __future__ import annotations
 import logging
 import threading
 
+from . import remote
 from . import voices as voices_mod
 
 log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 24000
 REPO_ID = "hexgrad/Kokoro-82M"  # Architektur-Referenz; Gewichte kommen lokal
+
+
+def _resample(samples, sr_in: int, sr_out: int):
+    """Lineare Umrechnung – reicht für Sprache, vermeidet weitere Pakete."""
+    import numpy as np
+
+    if sr_in == sr_out or len(samples) == 0:
+        return samples
+    n_out = int(round(len(samples) * sr_out / sr_in))
+    x_old = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
+    x_new = np.linspace(0.0, 1.0, num=n_out, endpoint=False)
+    return np.interp(x_new, x_old, samples).astype(np.float32)
 
 
 class SynthesisResult:
@@ -51,7 +64,11 @@ class TTS:
         return self._ready
 
     def load(self, voice_key: str) -> None:
-        """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
+        """Pipeline + Voicepack für eine Stimme laden (blockierend).
+        Bei entfernten Stimmen wird die eigene Standardstimme als Ersatz
+        vorgeladen, falls die Test-Instanz ausfällt."""
+        if remote.is_remote(voice_key):
+            voice_key = voices_mod.DEFAULT_VOICE
         spec = voices_mod.VOICES[voice_key]
         cache_key = (spec["backbone"], spec["lang"])
 
@@ -88,6 +105,17 @@ class TTS:
         self._ready = True
 
     def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
+        if remote.is_remote(voice_key):
+            try:
+                samples, sr = remote.REGISTRY.synthesize(text, voice_key, speed)
+                samples = _resample(samples, sr, SAMPLE_RATE)
+                if len(samples):
+                    return SynthesisResult(samples, len(samples) / SAMPLE_RATE, SAMPLE_RATE)
+                raise RuntimeError("kein Audio erhalten")
+            except Exception as exc:
+                log.warning("Entfernte Stimme %s nicht nutzbar (%s) – nutze %s",
+                            voice_key, exc, voices_mod.DEFAULT_VOICE)
+                voice_key = voices_mod.DEFAULT_VOICE
         if voice_key not in voices_mod.VOICES:
             voice_key = voices_mod.DEFAULT_VOICE
 

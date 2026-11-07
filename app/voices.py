@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import remote
+
 # Reihenfolge = Reihenfolge im Dropdown.
 VOICES: dict[str, dict] = {
     "victoria": {
@@ -63,7 +65,10 @@ def config_path() -> Path:
 
 
 def is_available(voice_key: str) -> bool:
-    """Alle Dateien vorhanden, die diese Stimme braucht?"""
+    """Alle Dateien vorhanden, die diese Stimme braucht?
+    Entfernte Stimmen: von der Test-Instanz aktuell freigegeben?"""
+    if remote.is_remote(voice_key):
+        return bool(remote.REGISTRY and remote.REGISTRY.get(voice_key))
     if voice_key not in VOICES:
         return False
     return (
@@ -73,10 +78,19 @@ def is_available(voice_key: str) -> bool:
     )
 
 
+def lang_of(voice_key: str) -> str:
+    """Sprachcode ("d" = Deutsch) – entscheidet "sagt" oder "says"."""
+    if remote.is_remote(voice_key):
+        return remote.REGISTRY.lang(voice_key) if remote.REGISTRY else "d"
+    return VOICES.get(voice_key, VOICES[DEFAULT_VOICE])["lang"]
+
+
 def available_voices() -> list[dict]:
-    """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
-    return [
+    """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown),
+    danach die freigegebenen Stimmen der Test-Instanz."""
+    local = [
         {"key": key, "label": data["label"]}
         for key, data in VOICES.items()
         if is_available(key)
     ]
+    return local + (remote.REGISTRY.voices() if remote.REGISTRY else [])

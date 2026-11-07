@@ -162,6 +162,7 @@ function applyStatus(s) {
   el.startstop.classList.toggle("running", s.running);
   el.skip.disabled = !s.running;
   fillVoices(s.voices || []);
+  if (s.remote) showRemoteStatus(s.remote);
   if (s.error) showError(s.error); else hideError();
 }
 
@@ -178,11 +179,21 @@ async function refreshStatus() {
 function fillVoices(voices) {
   const selected = el.voice.dataset.selected || el.voice.value;
   el.voice.innerHTML = "";
+  let remoteGroup = null;
   for (const v of voices) {
     const opt = document.createElement("option");
     opt.value = v.key;
     opt.textContent = v.label;
-    el.voice.append(opt);
+    if (v.remote) {
+      if (!remoteGroup) {
+        remoteGroup = document.createElement("optgroup");
+        remoteGroup.label = "Entfernte Stimmen";
+        el.voice.append(remoteGroup);
+      }
+      remoteGroup.append(opt);
+    } else {
+      el.voice.append(opt);
+    }
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
 }
@@ -332,3 +343,46 @@ el.startstop.addEventListener("click", async () => {
   connectWs();
   setInterval(refreshStatus, 5000);
 })();
+
+/* ------------------------------------------------- Entfernte Stimmen */
+const remoteEl = {
+  url: document.getElementById("remote_url"),
+  token: document.getElementById("remote_token"),
+  save: document.getElementById("remote-save"),
+  off: document.getElementById("remote-off"),
+  status: document.getElementById("remote-status"),
+};
+
+function showRemoteStatus(r) {
+  if (!r.enabled) remoteEl.status.textContent = "Nicht eingerichtet.";
+  else if (r.error) remoteEl.status.textContent = r.error;
+  else remoteEl.status.textContent = `Verbunden – ${r.count} Stimme${r.count === 1 ? "" : "n"} freigegeben.`;
+}
+
+async function saveRemote(changes) {
+  remoteEl.status.textContent = "Verbinde …";
+  const res = await fetch("/api/config", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes),
+  }).catch(() => null);
+  if (res && res.ok) {
+    const c = await res.json();
+    remoteEl.url.value = c.remote_url || "";
+    remoteEl.token.value = "";
+    remoteEl.token.placeholder = c.remote_token_set ? "gespeichert" : "";
+  }
+  const r = await fetch("/api/remote/refresh", { method: "POST" }).then((x) => x.json()).catch(() => null);
+  if (r) showRemoteStatus(r);
+  refreshStatus();
+}
+
+remoteEl.save.addEventListener("click", () => {
+  const changes = { remote_url: remoteEl.url.value };
+  if (remoteEl.token.value.trim()) changes.remote_token = remoteEl.token.value.trim();
+  saveRemote(changes);
+});
+remoteEl.off.addEventListener("click", () => saveRemote({ remote_url: "", remote_token: "" }));
+
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  remoteEl.url.value = c.remote_url || "";
+  remoteEl.token.placeholder = c.remote_token_set ? "gespeichert" : "";
+}).catch(() => null);
