@@ -619,8 +619,8 @@ class TTS:
 
             # Qwen-Temperatur gilt hier nicht – dafür Pockets eigene Einstellungen
 
-            # "v3": ältere Ergebnisse (Kauderwelsch, Zahlen nicht ausgeschrieben) verwerfen
-            temperature = ("pocket-v3",) + POCKET_PARAMS
+            # "v4": ältere Ergebnisse (Kauderwelsch, Zahlen, Vorlage ohne Pausenende) verwerfen
+            temperature = ("pocket-v4",) + POCKET_PARAMS
         elif voices_mod.is_ext(voice_key):
             temperature = None  # nutzen weder Temperatur noch Anweisung
         return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)

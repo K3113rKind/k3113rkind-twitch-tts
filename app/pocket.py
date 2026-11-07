@@ -109,6 +109,47 @@ def _supports_continue(model) -> bool:
     return _continue_ok
 
 
+def _prompt_file(ref_wav: str) -> str:
+    """Eigene Vorlage für Pocket aufbereiten wie im Kyutai-Training: höchstens
+    30 s, endet auf genau 80 ms Stille (Stille am Ende weg, 20 ms ausblenden,
+    80 ms Null anhängen). Endet die Vorlage mitten im Sprechen oder auf langer
+    Stille, setzt das Modell sonst die Vorlage fort -> Wortfetzen/Kauderwelsch
+    (pocket_tts/data/audio_utils.py: end_on_pause, erst nach 4.0.1 eingebaut).
+    Schlägt etwas fehl, bleibt es bei der Originaldatei."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        src = Path(ref_wav)
+        out = Path(os.environ.get("POCKET_PROMPT_DIR", "/tmp/pocket-prompts"))
+        dst = out / f"{src.stem}-{int(src.stat().st_mtime)}.wav"
+        if dst.is_file():
+            return str(dst)
+        audio, sr = sf.read(src, dtype="float32", always_2d=True)
+        wav = audio.mean(axis=1)[: int(30 * sr)]
+        frame = max(1, int(0.02 * sr))
+        n = len(wav) // frame
+        if n == 0:
+            return ref_wav
+        rms = np.sqrt(np.mean(wav[: n * frame].reshape(n, frame) ** 2, axis=1))
+        db = 20 * np.log10(rms + 1e-12)
+        loud = np.nonzero(db > db.max() - 35.0)[0]
+        end = (int(loud[-1]) + 1) * frame
+        wav = wav[:end].copy()
+        fade = min(int(0.02 * sr), end)
+        wav[end - fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+        wav = np.concatenate([wav, np.zeros(int(0.08 * sr), dtype=np.float32)])
+        out.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_suffix(".tmp.wav")
+        sf.write(tmp, wav, sr)
+        os.replace(tmp, dst)
+        log.info("Pocket-Vorlage %s: %.1f s, endet auf Pause", src.stem, len(wav) / sr)
+        return str(dst)
+    except Exception as exc:
+        log.warning("Pocket-Vorlage %s nicht aufbereitet (%s) – nehme Original", ref_wav, exc)
+        return ref_wav
+
+
 class PocketEngine:
     def __init__(self) -> None:
         self._models: dict[str, object] = {}
@@ -180,7 +221,8 @@ class PocketEngine:
         else:
             key = (language, voice)
         if key not in self._states:
-            source, needs_cloning = (ref_wav, True) if ref_wav else self._voice_source(voice)
+            source, needs_cloning = ((_prompt_file(ref_wav), True) if ref_wav
+                                     else self._voice_source(voice))
             if needs_cloning and not model.has_voice_cloning:
                 raise RuntimeError(CLONE_HINT)
             t0 = time.perf_counter()
