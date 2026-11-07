@@ -58,35 +58,13 @@ RUN TORCH_BEFORE=$(python -c "import torch; print(torch.__version__)") \
 # Rechenprozess an. Immer CPU-Torch. Abschalten: --build-arg EXTRA_ENGINES=""
 # (NeuTTS war hier ebenfalls eingebaut und wurde im Nov 2026 wieder entfernt:
 # schlechter Klang, eigene Stimmen brachen nach dem ersten Wort ab, RTF >2.)
-ARG EXTRA_ENGINES="chatterbox voxcpm omnivoice"
+ARG EXTRA_ENGINES="chatterbox"
 ARG CPU_TORCH_INDEX=https://download.pytorch.org/whl/cpu
 RUN case " $EXTRA_ENGINES " in *" chatterbox "*) \
       python -m venv /opt/chatterbox \
       && /opt/chatterbox/bin/pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 --index-url "$CPU_TORCH_INDEX" \
       && /opt/chatterbox/bin/pip install --no-cache-dir chatterbox-tts --extra-index-url "$CPU_TORCH_INDEX" \
       && /opt/chatterbox/bin/python -c "import torch; from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('chatterbox ok, torch', torch.__version__)" ;; esac
-
-# VoxCPM2 (OpenBMB) und OmniVoice (k2-fsa) – Test, je eigene venv mit CPU-Torch
-# 2.8 (passendes torchaudio). gcc nur während der Installation, falls eine
-# Abhängigkeit kompiliert werden muss.
-RUN case " $EXTRA_ENGINES " in *" voxcpm "*) \
-      apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
-      && python -m venv /opt/voxcpm \
-      && /opt/voxcpm/bin/pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url "$CPU_TORCH_INDEX" \
-      && /opt/voxcpm/bin/pip install --no-cache-dir voxcpm "torch==2.8.0" "torchaudio==2.8.0" \
-           --extra-index-url "$CPU_TORCH_INDEX" \
-      && /opt/voxcpm/bin/python -c "from voxcpm import VoxCPM; print('voxcpm ok')" \
-      && case "$TORCH_INDEX" in *cpu) apt-get purge -y gcc libc6-dev && apt-get autoremove -y ;; esac \
-      && rm -rf /var/lib/apt/lists/* ;; esac
-RUN case " $EXTRA_ENGINES " in *" omnivoice "*) \
-      apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
-      && python -m venv /opt/omnivoice \
-      && /opt/omnivoice/bin/pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url "$CPU_TORCH_INDEX" \
-      && /opt/omnivoice/bin/pip install --no-cache-dir omnivoice "torch==2.8.0" "torchaudio==2.8.0" \
-           --extra-index-url "$CPU_TORCH_INDEX" \
-      && /opt/omnivoice/bin/python -c "from omnivoice import OmniVoice; print('omnivoice ok')" \
-      && case "$TORCH_INDEX" in *cpu) apt-get purge -y gcc libc6-dev && apt-get autoremove -y ;; esac \
-      && rm -rf /var/lib/apt/lists/* ;; esac
 
 # Stimmtrennung für eigene Stimmen: BS-RoFormer über python-audio-separator
 # (MIT) in eigener venv – bringt eigene Torch-/ONNX-Versionen mit. Das Modell
