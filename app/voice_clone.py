@@ -28,7 +28,10 @@ from pathlib import Path
 
 from .voices import QWEN_BASE_MODELS, ref_dir
 
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
+# large-v3: deutlich genauere Abschrift. Qwen klont aus Ton UND Text der
+# Referenz – jedes falsch erkannte Wort verschlechtert den Klon.
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
+CANDIDATES = 3  # so viele Ausschnitte zur Auswahl
 PAD_S = 0.15  # Luft vor/nach dem Abschnitt
 
 
@@ -80,6 +83,9 @@ def separate(source: Path, work: Path) -> Path:
         res = subprocess.run([SEPARATOR_PYTHON, str(worker), str(stereo), str(vocals),
                               SEPARATOR_MODELS], capture_output=True, text=True)
         if res.returncode == 0 and vocals.is_file():
+            for line in res.stderr.splitlines():
+                if line.startswith(("Enthallt", "Enthallung übersprungen")):
+                    step(line.strip()[:200])
             out = work / "stimme_komplett.wav"
             to_wav(vocals, out, 24000, 1)
             return out
@@ -135,9 +141,12 @@ def ends_sentence(word: str) -> bool:
     return word.endswith((".", "!", "?", "…"))
 
 
-def pick_window(words, ideal: float):
+def pick_windows(words, ideal: float, count: int = CANDIDATES) -> list[tuple[int, int]]:
+    """Die besten, sich nicht überschneidenden Abschnitte (bester zuerst).
+    Bewertung wie bisher: Satzgrenzen, Länge nahe am Ziel, keine langen
+    Pausen, sicher erkannte Wörter."""
     lo, hi = max(ideal - 2, 3.0), ideal + 2
-    best, best_score = None, float("-inf")
+    scored = []
     for i in range(len(words)):
         for j in range(i, len(words)):
             dur = words[j].end - words[i].start
@@ -152,15 +161,27 @@ def pick_window(words, ideal: float):
             score -= abs(dur - ideal) * 0.5
             score -= sum(max(0.0, g - 0.6) for g in gaps) * 2
             score += 4 * (sum(w.probability for w in seq) / len(seq))
-            if score > best_score:
-                best, best_score = (i, j), score
-    if best is None:  # zu wenig Sprache oder keine passende Länge
+            scored.append((score, i, j))
+    scored.sort(reverse=True)
+    picked: list[tuple[int, int]] = []
+    for _score, i, j in scored:
+        a, b = words[i].start, words[j].end
+        if all(b <= words[pi].start or a >= words[pj].end for pi, pj in picked):
+            picked.append((i, j))
+            if len(picked) >= count:
+                break
+    if not picked:  # zu wenig Sprache oder keine passende Länge
         j = max((k for k in range(len(words)) if words[k].end - words[0].start <= hi), default=len(words) - 1)
-        best = (0, j)
-    return best
+        picked = [(0, j)]
+    return picked
 
 
-def cut(vocals: Path, words, i: int, j: int, name: str) -> dict:
+def candidates_dir(name: str) -> Path:
+    return ref_dir() / ".kandidaten" / name
+
+
+def cut(vocals: Path, words, i: int, j: int, dst: Path) -> dict:
+    """Abschnitt i..j als dst.wav (24 kHz mono, Lautheit angeglichen) + dst.txt."""
     prev_end = words[i - 1].end if i > 0 else 0.0
     next_start = words[j + 1].start if j + 1 < len(words) else words[j].end + PAD_S
     start = max(prev_end, words[i].start - PAD_S, 0.0)
@@ -168,16 +189,34 @@ def cut(vocals: Path, words, i: int, j: int, name: str) -> dict:
     dur = end - start
     text = " ".join(w.word for w in words[i:j + 1])
 
-    folder = ref_dir()
-    folder.mkdir(parents=True, exist_ok=True)
-    tmp_wav = folder / f".{name}.wav.tmp"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_wav = dst.parent / f".{dst.name}.wav.tmp"
     fade = f"afade=t=in:d=0.03,afade=t=out:st={max(dur - 0.05, 0):.3f}:d=0.05,loudnorm=I=-20:TP=-2"
     run("ffmpeg", "-loglevel", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
         "-i", str(vocals), "-af", fade, "-ac", "1", "-ar", "24000", "-f", "wav", str(tmp_wav))
-    (folder / f"{name}.txt").write_text(text + "\n", encoding="utf-8")
-    os.replace(tmp_wav, folder / f"{name}.wav")  # erst jetzt sichtbar -> nie halbfertig im Dropdown
-    return {"name": name, "start": round(start, 1), "end": round(end, 1),
-            "seconds": round(dur, 1), "text": text}
+    dst.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
+    os.replace(tmp_wav, dst.with_suffix(".wav"))  # erst jetzt sichtbar -> nie halbfertig
+    return {"start": round(start, 1), "end": round(end, 1), "seconds": round(dur, 1), "text": text}
+
+
+def cut_candidates(vocals: Path, words, windows, name: str) -> dict:
+    """Alle Kandidaten nach .kandidaten/NAME/1..n, Kandidat 1 (der beste)
+    zusätzlich als NAME.wav/.txt – die Stimme ist also sofort nutzbar und
+    lässt sich in der Oberfläche auf einen anderen Kandidaten umstellen."""
+    folder = candidates_dir(name)
+    if folder.is_dir():
+        shutil.rmtree(folder, ignore_errors=True)
+    cands = []
+    for n, (i, j) in enumerate(windows, 1):
+        info = cut(vocals, words, i, j, folder / str(n))
+        cands.append({"idx": n, **info})
+    best = folder / "1"
+    tmp = ref_dir() / f".{name}.wav.tmp"
+    shutil.copyfile(best.with_suffix(".wav"), tmp)
+    shutil.copyfile(best.with_suffix(".txt"), ref_dir() / f"{name}.txt")
+    os.replace(tmp, ref_dir() / f"{name}.wav")
+    (folder / "gewaehlt").write_text("1\n", encoding="utf-8")
+    return {"name": name, **cands[0], "candidates": cands, "chosen": 1}
 
 
 # ---------------------------------------------------- 6. Base-Modelle
@@ -205,8 +244,8 @@ def main() -> None:
         words = transcribe(vocals, work)
         if not words:
             raise RuntimeError("Whisper hat keine Sprache gefunden – ist in der Aufnahme jemand zu hören?")
-        step("Besten Abschnitt wählen …")
-        result = cut(vocals, words, *pick_window(words, args.sekunden), args.name)
+        step("Beste Abschnitte wählen …")
+        result = cut_candidates(vocals, words, pick_windows(words, args.sekunden), args.name)
         ensure_models()
         print("ERGEBNIS " + json.dumps(result, ensure_ascii=False), flush=True)
     finally:

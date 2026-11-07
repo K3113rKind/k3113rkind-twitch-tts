@@ -1,9 +1,10 @@
 """Stimme von Musik/Geräuschen trennen – läuft in eigener venv (/opt/separator).
 
-Modell: BS-RoFormer (model_bs_roformer_ep_317_sdr_12.9755.ckpt) über
+Schritt 1 – Modell: BS-RoFormer (model_bs_roformer_ep_317_sdr_12.9755.ckpt) über
 python-audio-separator (MIT). Stimmen-SDR 12,9 – deutlich sauberer als
 Demucs htdemucs: weniger Musikreste, weniger verlorene Höhen/Zischlaute.
-Eigene venv, weil audio-separator eigene Torch-/ONNX-Versionen mitbringt.
+Schritt 2 – Raumhall entfernen (Mel-Band-RoFormer-Dereverb von anvuew), siehe
+DEREVERB unten. Eigene venv, weil audio-separator eigene Torch-/ONNX-Versionen mitbringt.
 Nur Standardbibliothek + audio_separator, keine Importe aus app/.
 
 Aufruf: /opt/separator/bin/python app/separate_worker.py EINGABE.wav AUSGABE.wav MODELLORDNER
@@ -15,6 +16,9 @@ import shutil
 import sys
 
 MODEL = os.environ.get("SEPARATOR_MODEL", "model_bs_roformer_ep_317_sdr_12.9755.ckpt")
+# Zweiter Schritt: Raumhall aus der Stimme entfernen (Qwen kopiert ihn sonst
+# mit). Leer = aus. Schlägt er fehl, bleibt die Stimmspur ohne Enthallung.
+DEREVERB = os.environ.get("SEPARATOR_DEREVERB", "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt")
 
 
 def main() -> None:
@@ -30,7 +34,34 @@ def main() -> None:
         sys.exit("audio-separator hat keine Stimmspur geliefert")
     vocals = files[0] if os.path.isabs(files[0]) else os.path.join(out_dir, files[0])
     shutil.move(vocals, dst)
+    if DEREVERB:
+        dereverb(dst, out_dir, model_dir)
     print(dst, flush=True)
+
+
+def dereverb(path: str, out_dir: str, model_dir: str) -> None:
+    """Hall entfernen; ersetzt path nur bei Erfolg."""
+    from audio_separator.separator import Separator
+
+    try:
+        sep = Separator(output_dir=out_dir, model_file_dir=model_dir, output_format="WAV")
+        sep.load_model(model_filename=DEREVERB)
+        files = [f if os.path.isabs(f) else os.path.join(out_dir, f) for f in sep.separate(path)]
+    except Exception as exc:  # Modell nicht verfügbar o. Ä. -> ohne Enthallung weiter
+        print(f"Enthallung übersprungen: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return
+    def key(f: str) -> str:
+        return os.path.basename(f).lower().replace(" ", "").replace("-", "").replace("_", "")
+    dry = [f for f in files if any(k in key(f) for k in ("noreverb", "dry", "noecho"))]
+    if not dry:
+        print("Enthallung übersprungen: keine hallfreie Spur unter "
+              + ", ".join(os.path.basename(f) for f in files), file=sys.stderr, flush=True)
+    else:
+        shutil.move(dry[0], path)
+        print(f"Enthallt mit {DEREVERB}", file=sys.stderr, flush=True)
+    for f in files:
+        if os.path.exists(f) and f != path:
+            os.remove(f)
 
 
 if __name__ == "__main__":

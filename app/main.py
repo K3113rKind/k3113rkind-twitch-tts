@@ -385,9 +385,75 @@ async def clone_text(body: dict):
     if not text:
         raise HTTPException(400, "Der Text darf nicht leer sein.")
     (ref_dir() / f"{name}.txt").write_text(text + "\n", encoding="utf-8")
+    # Korrektur auch beim gewählten Ausschnitt merken (falls später neu gewählt)
+    chosen = _cand_dir(name) / "gewaehlt"
+    if chosen.exists():
+        idx = chosen.read_text().strip() or "1"
+        if (_cand_dir(name) / f"{idx}.txt").exists():
+            (_cand_dir(name) / f"{idx}.txt").write_text(text + "\n", encoding="utf-8")
     if clone_job.get("result") and clone_job["result"].get("name") == name:
         clone_job["result"]["text"] = text
     return {"ok": True}
+
+
+def _cand_dir(name: str) -> Path:
+    return ref_dir() / ".kandidaten" / name
+
+
+@app.get("/api/clone/candidates/{name}")
+async def clone_candidates(name: str):
+    """Ausschnitte, die beim Erstellen zur Auswahl gespeichert wurden."""
+    name = name.strip().lower()
+    folder = _cand_dir(name)
+    if not CLONE_NAME.match(name) or not folder.is_dir():
+        return {"name": name, "chosen": None, "candidates": []}
+    chosen_file = folder / "gewaehlt"
+    chosen = int(chosen_file.read_text().strip() or 1) if chosen_file.exists() else None
+    out = []
+    for wav in sorted(folder.glob("*.wav"), key=lambda p: int(p.stem) if p.stem.isdigit() else 99):
+        if not wav.stem.isdigit():
+            continue
+        txt = wav.with_suffix(".txt")
+        seconds = max(0.0, (wav.stat().st_size - 44) / (24000 * 2))  # 24 kHz, 16 Bit mono
+        out.append({"idx": int(wav.stem), "seconds": round(seconds, 1),
+                    "text": txt.read_text(encoding="utf-8").strip() if txt.exists() else ""})
+    return {"name": name, "chosen": chosen, "candidates": out}
+
+
+@app.get("/api/clone/candidates/{name}/{idx}.wav")
+async def clone_candidate_audio(name: str, idx: int):
+    name = name.strip().lower()
+    wav = _cand_dir(name) / f"{idx}.wav"
+    if not CLONE_NAME.match(name) or not wav.is_file():
+        raise HTTPException(404, "Ausschnitt nicht gefunden.")
+    return FileResponse(wav, media_type="audio/wav", headers=NO_CACHE)
+
+
+@app.post("/api/clone/candidates/{name}/{idx}")
+async def clone_choose(name: str, idx: int):
+    """Anderen Ausschnitt als Vorlage der eigenen Stimme übernehmen. Alle
+    Engines merken das an der geänderten Datei und bereiten neu vor."""
+    name = name.strip().lower()
+    folder = _cand_dir(name)
+    wav, txt = folder / f"{idx}.wav", folder / f"{idx}.txt"
+    if not CLONE_NAME.match(name) or not wav.is_file():
+        raise HTTPException(404, "Ausschnitt nicht gefunden.")
+    if clone_job.get("running") and clone_job.get("name") == name:
+        raise HTTPException(409, "Diese Stimme wird gerade erstellt.")
+    tmp = ref_dir() / f".{name}.wav.tmp"
+    shutil.copyfile(wav, tmp)
+    if txt.exists():
+        shutil.copyfile(txt, ref_dir() / f"{name}.txt")
+    os.replace(tmp, ref_dir() / f"{name}.wav")
+    (folder / "gewaehlt").write_text(f"{idx}\n", encoding="utf-8")
+    tts.forget_clone(name)
+    sync_clone_voices()
+    if clone_job.get("result") and clone_job["result"].get("name") == name:
+        clone_job["result"]["chosen"] = idx
+    log.info("Eigene Stimme %s: Ausschnitt %d übernommen", name, idx)
+    await broadcaster.send({"type": "voices_changed"})
+    text = txt.read_text(encoding="utf-8").strip() if txt.exists() else ""
+    return {"ok": True, "chosen": idx, "text": text}
 
 
 @app.get("/api/clone/voices")
@@ -430,6 +496,7 @@ async def clone_delete(name: str):
     for suffix in (".wav", ".txt"):
         (folder / f"{name}{suffix}").unlink(missing_ok=True)
     (folder / "kokoro" / f"{name}.pt").unlink(missing_ok=True)
+    shutil.rmtree(_cand_dir(name), ignore_errors=True)
     sync_clone_voices()
     tts.forget_clone(name)
     log.info("Eigene Stimme %s gelöscht", name)

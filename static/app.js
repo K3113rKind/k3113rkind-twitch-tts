@@ -23,7 +23,8 @@ const el = {
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
   cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
-  cloneList: $("clone-list"), cloneResult: $("clone-result"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
+  cloneList: $("clone-list"), cloneResult: $("clone-result"),
+  cloneCandsBox: $("clone-cands-box"), cloneCands: $("clone-cands"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
   style: $("qwen_style"), styleCustom: $("qwen_style_custom"), styleRow: $("style-row"),
   temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
@@ -576,6 +577,7 @@ function showCloneStatus(job) {
     if (el.cloneResult.dataset.name !== r.name) {
       el.cloneText.value = r.text;
       el.cloneResult.dataset.name = r.name;
+      loadCandidates(r.name);
     }
     el.cloneResult.classList.remove("hidden");
   }
@@ -642,6 +644,67 @@ el.cloneTextSave.addEventListener("click", async () => {
   else { const b = await res.json().catch(() => ({})); showError(b.detail || "Speichern fehlgeschlagen"); }
 });
 
+/* ------------------------------------------ Ausschnitte zur Auswahl */
+// Ein Player für alle Ausschnitte: ▶ startet, nochmal klicken stoppt
+const candAudio = new Audio();
+let candPlaying = null;
+candAudio.addEventListener("ended", () => setCandPlaying(null));
+
+function setCandPlaying(btn) {
+  if (candPlaying && candPlaying !== btn) candPlaying.textContent = "▶";
+  candPlaying = btn;
+  if (btn) btn.textContent = "■";
+}
+
+function fmtSec(s) {
+  return `${s.toFixed(1).replace(".", ",")} s`;
+}
+
+async function loadCandidates(name) {
+  const data = await fetch(`/api/clone/candidates/${encodeURIComponent(name)}`)
+    .then((r) => r.json()).catch(() => null);
+  el.cloneCands.innerHTML = "";
+  const list = (data && data.candidates) || [];
+  el.cloneCandsBox.classList.toggle("hidden", list.length < 2);
+  for (const c of list) {
+    const li = document.createElement("li");
+    const play = document.createElement("button");
+    play.type = "button";
+    play.textContent = "▶";
+    play.title = "Anhören";
+    play.addEventListener("click", () => {
+      if (candPlaying === play) { candAudio.pause(); setCandPlaying(null); return; }
+      candAudio.src = `/api/clone/candidates/${encodeURIComponent(name)}/${c.idx}.wav?t=${Date.now()}`;
+      candAudio.play().then(() => setCandPlaying(play)).catch((e) => showError("Abspielen nicht möglich: " + e));
+    });
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `${c.idx} · ${fmtSec(c.seconds)} · ${c.text}`;
+    meta.title = c.text;
+    const pick = document.createElement("button");
+    pick.type = "button";
+    const active = data.chosen === c.idx;
+    pick.textContent = active ? "✓ gewählt" : "Diesen nehmen";
+    pick.disabled = active;
+    pick.addEventListener("click", async () => {
+      pick.disabled = true;
+      const res = await fetch(`/api/clone/candidates/${encodeURIComponent(name)}/${c.idx}`, { method: "POST" });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        showError(b.detail || "Übernehmen fehlgeschlagen");
+        pick.disabled = false;
+        return;
+      }
+      const r = await res.json();
+      hideError();
+      el.cloneText.value = r.text;
+      loadCandidates(name);
+    });
+    li.append(play, meta, pick);
+    el.cloneCands.append(li);
+  }
+}
+
 /* ------------------------------------------------------------------ Init */
 (async function init() {
   applyConfig(await fetch("/api/config").then((r) => r.json()));
@@ -687,7 +750,19 @@ async function loadCloneList() {
       if (el.cloneResult.dataset.name === v.name) el.cloneResult.classList.add("hidden");
       // Liste/Dropdown aktualisiert die voices_changed-Nachricht
     });
-    li.append(name, meta, btn);
+    // Ausschnitt nachträglich wechseln (falls beim Erstellen Kandidaten entstanden)
+    const cands = document.createElement("button");
+    cands.type = "button";
+    cands.textContent = "Ausschnitt";
+    cands.title = "Ausschnitte anhören und einen anderen übernehmen";
+    cands.addEventListener("click", () => {
+      el.cloneResult.dataset.name = v.name;
+      el.cloneText.value = v.text;
+      el.cloneResult.classList.remove("hidden");
+      loadCandidates(v.name);
+      el.cloneResult.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    li.append(name, meta, cands, btn);
     el.cloneList.append(li);
   }
 }

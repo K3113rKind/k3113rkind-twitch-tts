@@ -21,6 +21,7 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
+from .text_normalize import normalize as normalize_text
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
 from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen
 
@@ -31,6 +32,8 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 SHORT_CHARS = 60
 # Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
 NAME_SPLIT_MIN_CHARS = 25
+# Abschnittslänge (Zeichen), wenn mehrere Rechenprozesse parallel rechnen
+PARALLEL_CHUNK_CHARS = 160
 
 log = logging.getLogger(__name__)
 
@@ -294,14 +297,15 @@ class ChatSpeaker:
         return voice
 
     @staticmethod
-    def _spoken_text(msg: QueuedMessage, cfg, voice: str) -> str:
+    def _spoken_text(msg: QueuedMessage, cfg, voice: str, body: str | None = None) -> str:
+        body = msg.text if body is None else body
         if cfg["read_username"] and not msg.raw:
             if cfg["username_style"] == "sagt":
                 # Verb passend zur Sprache der gewählten Stimme
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
-                return f"{msg.username} {verb} {msg.text}"
-            return f"{msg.username}: {msg.text}"
-        return msg.text
+                return f"{msg.username} {verb} {body}"
+            return f"{msg.username}: {body}"
+        return body
 
     @staticmethod
     def _gen_params(cfg) -> tuple:
@@ -312,9 +316,12 @@ class ChatSpeaker:
         # Tempo ihrer Referenzaufnahme.
         return cfg["speed"], cfg["qwen_temperature"], speed_instruct(instruct, cfg["speed"])
 
-    @staticmethod
-    def _chunks(text: str, voice: str) -> list[str]:
+    def _chunks(self, text: str, voice: str) -> list[str]:
         limit = chunk_chars(voice)
+        if not limit and is_chunked(voice) and self.tts.parallel(voice):
+            # Parallele Rechenprozesse: gleichmäßige, mittelgroße Abschnitte –
+            # alle rechnen gleichzeitig, der längste bestimmt die Wartezeit.
+            limit = PARALLEL_CHUNK_CHARS
         if not is_chunked(voice):
             chunks = [text]
         elif limit:
@@ -336,15 +343,20 @@ class ChatSpeaker:
         Text rechnet parallel – der erste Ton kommt so deutlich früher.
         Sehr kurze Nachrichten bleiben am Stück (einzelne Wörter verschluckt
         Qwen sonst eher)."""
+        # Qwen/Pocket: Zahlen, Daten, Abkürzungen usw. ausschreiben (nur den
+        # Nachrichtentext – Namen bleiben, wie sie sind)
+        body = normalize_text(msg.text) if (is_qwen(voice) or is_pocket(voice)) else msg.text
+        if not body:
+            body = msg.text
         if (cfg["read_username"] and not msg.raw and self.tts.parallel(voice)
-                and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
+                and len(body) >= NAME_SPLIT_MIN_CHARS):
             if cfg["username_style"] == "sagt":
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
                 prefix = f"{msg.username} {verb}:"
             else:
                 prefix = f"{msg.username}:"
-            return [prefix] + self._chunks(msg.text, voice)
-        return self._chunks(self._spoken_text(msg, cfg, voice), voice)
+            return [prefix] + self._chunks(body, voice)
+        return self._chunks(self._spoken_text(msg, cfg, voice, body), voice)
 
     def _maybe_prefetch(self) -> None:
         """Qwen mit mehreren Rechenprozessen (CPU): wartende Nachrichten
