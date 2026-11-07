@@ -415,9 +415,9 @@ for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.rea
 el.voice.addEventListener("change", () => {
   el.voice.dataset.selected = el.voice.value;
   updateTemperatureRow();
-  // Qwen-Stimme schon beim Auswählen vorladen, nicht erst bei "Wechseln"
+  // Qwen-/Pocket-Stimme schon beim Auswählen vorladen, nicht erst bei "Wechseln"
   const opt = el.voice.selectedOptions[0];
-  if (opt && opt.dataset.qwen) {
+  if (opt && (opt.dataset.qwen || opt.dataset.pocket)) {
     fetch("/api/warmup", { method: "POST", headers: { "Content-Type": "application/json" },
                            body: JSON.stringify({ voice: el.voice.value }) }).catch(() => {});
   }

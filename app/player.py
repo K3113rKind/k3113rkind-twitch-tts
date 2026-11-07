@@ -477,7 +477,8 @@ class ChatSpeaker:
         # Lange Testtexte (ab 3 Abschnitten): erst losspielen, wenn ein Vorrat
         # fertig ist – so viele Abschnitte wie Prozesse, mindestens 3, höchstens 5
         needed = 1
-        if parallel and msg.raw and len(chunks) >= 3:  # nur Testtext, nie Chat
+        # nur Qwen (Pocket ist schnell genug), nur Testtext, nie Chat
+        if parallel and msg.raw and is_qwen(voice) and len(chunks) >= 3:
             needed = min(len(chunks), max(PREBUFFER_MIN, min(PREBUFFER_MAX, workers)))
         prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
                 "needed": needed, "workers": workers}

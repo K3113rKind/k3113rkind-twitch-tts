@@ -28,7 +28,7 @@ from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
 from .voices import (DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
-                     is_available, is_qwen, needs_download, ref_dir, sync_clone_voices,
+                     is_available, is_pocket, is_qwen, needs_download, ref_dir, sync_clone_voices,
                      display_name, preview_text, speed_instruct, voice_catalog)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -228,7 +228,7 @@ async def apply_voice():
     speaker.skip()
     # Mehrere Qwen-Rechenprozesse: Modell gleich in allen laden, nicht erst
     # bei den ersten Nachrichten (je ~10 s Wartezeit)
-    if tts.pool_active and is_qwen(voice) and not tts.warming:
+    if ((tts.pool_active and is_qwen(voice)) or is_pocket(voice)) and not tts.warming:
         asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
     return _status()
 
@@ -239,7 +239,12 @@ async def warmup_voice(body: dict):
     Läuft der Chat mit einem anderen Qwen-Modell, wird nicht umgeladen – das
     würde die laufende Ausgabe ausbremsen."""
     voice = str(body.get("voice", ""))
-    if not is_available(voice) or not is_qwen(voice) or tts.warming:
+    if not is_available(voice) or tts.warming:
+        return {"ok": False}
+    if is_pocket(voice):  # eigene Prozesse, stört eine laufende Qwen-Ausgabe kaum
+        asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
+        return {"ok": True}
+    if not is_qwen(voice):
         return {"ok": False}
     current = config.get("voice")
     if (state["twitch"] is not None and is_available(current) and is_qwen(current)
@@ -545,7 +550,8 @@ async def set_workers(body: dict):
     voice = config.get("voice")
     # Qwen-Prozesse gleich wieder hochfahren (Modell laden), sonst wartet die
     # erste Nachricht darauf
-    if engine == "qwen" and is_available(voice) and is_qwen(voice) and not tts.warming:
+    if (is_available(voice) and not tts.warming
+            and ((engine == "qwen" and is_qwen(voice)) or (engine == "pocket" and is_pocket(voice)))):
         asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
     log.info("Rechenprozesse %s: %d", engine, count)
     return {"ok": True, "workers": tts.workers_state()}

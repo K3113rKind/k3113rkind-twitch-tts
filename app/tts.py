@@ -884,8 +884,13 @@ class TTS:
         # vorher kennt is_qwen "klon-…"-Schlüssel noch nicht (KeyError, das
         # Aufwärmen fiel dadurch stillschweigend aus).
         try:
-            if not voices_mod.is_available(voice_key) or not voices_mod.is_qwen(voice_key):
-                log.info("Kein Aufwärmen: gewählte Stimme %s ist keine Qwen-Stimme", voice_key)
+            if not voices_mod.is_available(voice_key):
+                return
+            if voices_mod.is_pocket(voice_key):
+                self._warmup_pocket(voice_key)
+                return
+            if not voices_mod.is_qwen(voice_key):
+                log.info("Kein Aufwärmen: gewählte Stimme %s ist keine Qwen-/Pocket-Stimme", voice_key)
                 return
         except Exception as exc:
             log.warning("Aufwärmen übersprungen: %s", exc)
@@ -924,6 +929,33 @@ class TTS:
             log.info("Aufwärmen fertig in %.0f s", time.perf_counter() - t0)
         except Exception as exc:  # Aufwärmen darf den Betrieb nie verhindern
             log.warning("Aufwärmen fehlgeschlagen: %s", exc)
+        finally:
+            self.warming = False
+
+    def _warmup_pocket(self, voice_key: str) -> None:
+        """Pocket: Modell und Stimm-Vorlage in allen Rechenprozessen vorab laden
+        (beides ist langsam und passierte sonst beim ersten Text in jedem
+        Prozess einzeln)."""
+        self.warming = True
+        t0 = time.perf_counter()
+        spec = voices_mod.VOICES[voice_key]
+        args = dict(text="Hallo.", language=spec["language"], voice=spec.get("voice"),
+                    ref_wav=spec.get("ref_wav"))
+        try:
+            pool = self.pool_for("pocket")
+            if pool is None:
+                self._pocket.synthesize(args["text"], args["language"], args["voice"], args["ref_wav"])
+                n = 1
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+
+                n = pool.workers
+                with ThreadPoolExecutor(n) as ex:
+                    list(ex.map(lambda i: pool.submit(dict(args), worker=i), range(n)))
+            log.info("Pocket %s in %d Rechenprozess%s vorgeladen in %.0f s", voice_key, n,
+                     "" if n == 1 else "en", time.perf_counter() - t0)
+        except Exception as exc:  # Aufwärmen darf den Betrieb nie verhindern
+            log.warning("Pocket-Aufwärmen fehlgeschlagen: %s", exc)
         finally:
             self.warming = False
 
