@@ -772,7 +772,7 @@ recBtn.addEventListener("click", async () => {
   rec.onstop = () => {
     stream.getTracks().forEach((t) => t.stop());
     recBtn.disabled = false;
-    recBtn.textContent = "🎙 12 Sekunden aufnehmen";
+    recBtn.textContent = "🎙 Aufnahme (12 Sek.)";
     const mime = rec.mimeType || type || "audio/webm";
     const ext = mime.includes("mp4") ? ".m4a" : mime.includes("ogg") ? ".ogg" : ".webm";
     submitRecording(new Blob(parts, { type: mime }), ext);
