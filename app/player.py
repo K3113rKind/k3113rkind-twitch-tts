@@ -32,8 +32,9 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 SHORT_CHARS = 60
 # Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
 NAME_SPLIT_MIN_CHARS = 25
-# Abschnittslänge (Zeichen), wenn mehrere Rechenprozesse parallel rechnen
-PARALLEL_CHUNK_CHARS = 160
+# Mehrere Rechenprozesse: so viele Abschnitte eines langen Textes rechnen
+# gleichzeitig (der Reihe nach; die übrigen Prozesse bleiben für den Chat frei)
+CHUNK_LOOKAHEAD = 2
 
 log = logging.getLogger(__name__)
 
@@ -318,10 +319,6 @@ class ChatSpeaker:
 
     def _chunks(self, text: str, voice: str) -> list[str]:
         limit = chunk_chars(voice)
-        if not limit and is_chunked(voice) and self.tts.parallel(voice):
-            # Parallele Rechenprozesse: gleichmäßige, mittelgroße Abschnitte –
-            # alle rechnen gleichzeitig, der längste bestimmt die Wartezeit.
-            limit = PARALLEL_CHUNK_CHARS
         if not is_chunked(voice):
             chunks = [text]
         elif limit:
@@ -443,16 +440,20 @@ class ChatSpeaker:
         # Mehrere Rechenprozesse: alle Abschnitte gleichzeitig anstoßen
         # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
         # nächsten, während der aktuelle spielt.
-        parallel = self.tts.parallel(voice)
-        pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
+        # Mehrere Rechenprozesse: höchstens LOOKAHEAD Abschnitte gleichzeitig,
+        # der Reihe nach. Alle auf einmal zu starten teilt die Kerne auf zu
+        # viele Abschnitte auf – jeder wird langsam fertig, und nach jedem Satz
+        # entsteht eine Pause. Ohne Rechenprozesse: immer nur der nächste.
+        ahead = CHUNK_LOOKAHEAD if self.tts.parallel(voice) else 1
+        pendings = [synth(c) for c in chunks[:ahead]]
         skipped = False
 
         for idx in range(len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 break
-            if not parallel and idx + 1 < len(chunks):
-                pendings.append(synth(chunks[idx + 1]))
+            if len(pendings) < len(chunks):
+                pendings.append(synth(chunks[len(pendings)]))
 
             totals["compute"] += result.compute_seconds
             totals["load"] += result.load_seconds
