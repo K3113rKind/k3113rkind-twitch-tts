@@ -584,7 +584,8 @@ class TTS:
         self._pools: dict[str, object] = {}
         from .qwen_pool import QWEN_WORKERS
 
-        self._workers: dict[str, int] = {"qwen": QWEN_WORKERS, "pocket": 1}
+        self._workers: dict[str, int] = {"qwen": QWEN_WORKERS, "pocket": 1,
+                                         "neutts": 1, "chatterbox": 1}
         self._pool_lock = threading.Lock()
         from collections import OrderedDict
 
@@ -607,15 +608,15 @@ class TTS:
         )
         if spec.get("engine") != "qwen":
             instruct = None  # nur Preset-Stimmen verstehen Anweisungen
-        if voices_mod.is_pocket(voice_key):
-            temperature = None  # Pocket nutzt weder Temperatur noch Anweisung
+        if voices_mod.is_pocket(voice_key) or voices_mod.is_ext(voice_key):
+            temperature = None  # nutzen weder Temperatur noch Anweisung
         return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
 
     def _cached_path(self, voice_key: str) -> bool:
         """Läuft diese Stimme über Zwischenspeicher/Vorab-Berechnung? Qwen
         immer, Pocket nur mit mehreren Rechenprozessen."""
-        return voices_mod.is_qwen(voice_key) or (voices_mod.is_pocket(voice_key)
-                                                 and self.parallel(voice_key))
+        return (voices_mod.is_qwen(voice_key) or voices_mod.is_ext(voice_key)
+                or (voices_mod.is_pocket(voice_key) and self.parallel(voice_key)))
 
     def has_result(self, text: str, voice_key: str, temperature=None, instruct=None) -> bool:
         """Liegt für diesen Text schon fertiges Audio bereit (Gruppe oder Cache)?"""
@@ -652,12 +653,28 @@ class TTS:
             sample_rate=SAMPLE_RATE, compute_seconds=compute_s, load_seconds=load_s,
         )
 
+    def _ext_compute(self, voice_key: str, spec: dict, text: str) -> SynthesisResult:
+        """NeuTTS / Chatterbox: immer in eigenen Rechenprozessen (eigene venv)."""
+        pool = self.pool_for(spec["engine"])
+        samples, compute_s, load_s, _dec, sr = pool.submit(dict(
+            text=text, ref_wav=spec.get("ref_wav"), ref_txt=spec.get("ref_txt"),
+            ref_codes=spec.get("ref_codes")))
+        samples = _resample(samples, sr, SAMPLE_RATE)
+        if len(samples) == 0:
+            raise ValueError("Kein Audio erzeugt.")
+        return SynthesisResult(
+            samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+            sample_rate=SAMPLE_RATE, compute_seconds=compute_s, load_seconds=load_s,
+        )
+
     def _qwen_compute(self, voice_key: str, spec: dict, text: str,
                       temperature=None, instruct=None) -> SynthesisResult:
         """Qwen (oder Pocket mit Rechenprozessen) rechnen – im Hauptprozess
         oder in einem freien Rechenprozess."""
         if voices_mod.is_pocket(voice_key):
             return self._pocket_compute(voice_key, spec, text)
+        if voices_mod.is_ext(voice_key):
+            return self._ext_compute(voice_key, spec, text)
         instruct = instruct if spec.get("engine") == "qwen" else None
         t_load = time.perf_counter()
         self.load(voice_key)
@@ -729,7 +746,8 @@ class TTS:
         return self._qwen.device_name
 
     # ------------------------------------------------ Rechenprozesse je Engine
-    POOL_ENGINES = {"qwen": "Qwen", "pocket": "Pocket TTS"}
+    POOL_ENGINES = {"qwen": "Qwen", "pocket": "Pocket TTS", "neutts": "NeuTTS",
+                    "chatterbox": "Chatterbox"}
 
     @staticmethod
     def _engine_of(voice_key: str) -> str | None:
@@ -737,6 +755,8 @@ class TTS:
             return "qwen"
         if voices_mod.is_pocket(voice_key):
             return "pocket"
+        if voices_mod.is_ext(voice_key):
+            return voices_mod.engine(voice_key)
         return None
 
     def _qwen_on_gpu(self) -> bool:
@@ -754,6 +774,11 @@ class TTS:
             if pool is not None:
                 return pool
             n = self._workers.get(engine, 1)
+            if engine in voices_mod.EXT_ENGINES:  # laufen immer in eigenen Prozessen
+                from .ext_pool import ExtPool
+
+                pool = self._pools[engine] = ExtPool(engine, n, voices_mod.EXT_PYTHON[engine])
+                return pool
             if n <= 1:
                 return None
             from .qwen_pool import QwenPool
@@ -791,6 +816,8 @@ class TTS:
         for engine, label in self.POOL_ENGINES.items():
             pool = self._pools.get(engine)
             note = ""
+            if engine in voices_mod.EXT_ENGINES and not Path(voices_mod.EXT_PYTHON[engine]).is_file():
+                continue  # nicht im Image installiert
             if engine == "qwen" and self._qwen_on_gpu():
                 note = "GPU erkannt – Qwen rechnet dort immer in einem Prozess."
             out[engine] = {"label": label, "count": self._workers.get(engine, 1),
@@ -801,7 +828,8 @@ class TTS:
     def parallel(self, voice_key: str) -> bool:
         """Rechnet diese Stimme mit mehreren Prozessen?"""
         engine = self._engine_of(voice_key) if voice_key in voices_mod.VOICES else None
-        return engine is not None and self.pool_for(engine) is not None
+        return (engine is not None and self._workers.get(engine, 1) > 1
+                and self.pool_for(engine) is not None)
 
     def workers_for(self, voice_key: str) -> int:
         engine = self._engine_of(voice_key) if voice_key in voices_mod.VOICES else None
@@ -874,6 +902,13 @@ class TTS:
     def load(self, voice_key: str) -> None:
         """Pipeline + Voicepack für eine Stimme laden (blockierend)."""
         spec = voices_mod.VOICES[voice_key]
+        if voices_mod.is_ext(voice_key):
+            if not voices_mod.is_available(voice_key):
+                raise FileNotFoundError(
+                    f"Für die Stimme '{spec['label']}' fehlt die Engine im Image oder die Referenz.")
+            self.pool_for(spec["engine"]).start()  # Prozesse laden ihr Modell sofort
+            self._ready = True
+            return
         if voices_mod.is_pocket(voice_key):
             if not voices_mod.is_available(voice_key):
                 raise FileNotFoundError("Pocket TTS ist nicht installiert (Paket pocket-tts).")

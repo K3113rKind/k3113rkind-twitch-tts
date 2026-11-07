@@ -138,6 +138,33 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
             "group": _name,
         }
 
+# --- NeuTTS / Chatterbox (Test) ---------------------------------------------
+# Laufen in eigenen Python-Umgebungen (/opt/neutts, /opt/chatterbox) über
+# app/ext_pool.py – deren Abhängigkeiten vertragen sich nicht mit dem Rest.
+NEUTTS_ENGINE = "neutts"
+CHATTERBOX_ENGINE = "chatterbox"
+EXT_PYTHON = {
+    NEUTTS_ENGINE: os.environ.get("NEUTTS_PYTHON", "/opt/neutts/bin/python"),
+    CHATTERBOX_ENGINE: os.environ.get("CHATTERBOX_PYTHON", "/opt/chatterbox/bin/python"),
+}
+EXT_ENGINES = tuple(EXT_PYTHON)
+NEUTTS_SAMPLES = Path(os.environ.get("NEUTTS_SAMPLES", "/opt/neutts/samples"))
+
+VOICES["neutts-greta"] = {
+    "label": "NeuTTS · Greta – Deutsch, weiblich (Test)",
+    "engine": NEUTTS_ENGINE,
+    "ref_codes": str(NEUTTS_SAMPLES / "greta.pt"),
+    "ref_txt": str(NEUTTS_SAMPLES / "greta.txt"),
+    "lang": "d",
+    "group": "NeuTTS",
+}
+VOICES["chatterbox-standard"] = {
+    "label": "Chatterbox · Standardstimme – Deutsch (Test, langsam)",
+    "engine": CHATTERBOX_ENGINE,
+    "lang": "d",
+    "group": "Chatterbox",
+}
+
 # Eigene Kokoro-Stimmpakete (app/kokoro_walk.py): /ref/kokoro/NAME.pt, laufen
 # auf dem deutschen Victoria-Backbone. Werden während der Suche laufend
 # verbessert – die Datei wird dabei ersetzt.
@@ -235,7 +262,7 @@ def is_visible(voice_key: str, visibility: dict | None = None) -> bool:
 
 
 # Schlüssel-Präfixe einer eigenen Stimme NAME: klon-<präfix>-NAME
-CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS, "kokoro"]
+CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS, "kokoro", *EXT_ENGINES]
 
 
 def clone_keys(name: str) -> set[str]:
@@ -274,6 +301,23 @@ def sync_clone_voices() -> None:
                     "lang": "d",
                     "group": "Eigene Stimmen",
                 }
+            wanted[f"klon-neutts-{wav.stem}"] = {
+                "label": f"{wav.stem} · eigene Stimme, NeuTTS – Deutsch (Test)",
+                "engine": NEUTTS_ENGINE,
+                "ref_wav": str(wav),
+                "ref_txt": str(txt),
+                "lang": "d",
+                "group": "Eigene Stimmen",
+                "custom_ext": True,
+            }
+            wanted[f"klon-chatterbox-{wav.stem}"] = {
+                "label": f"{wav.stem} · eigene Stimme, Chatterbox – Deutsch (Test, langsam)",
+                "engine": CHATTERBOX_ENGINE,
+                "ref_wav": str(wav),
+                "lang": "d",
+                "group": "Eigene Stimmen",
+                "custom_ext": True,
+            }
         for pack in sorted((folder / "kokoro").glob("*.pt")):
             wanted[f"klon-kokoro-{pack.stem}"] = {
                 "label": f"{pack.stem} · eigene Stimme, Kokoro – Deutsch (Test)",
@@ -284,7 +328,8 @@ def sync_clone_voices() -> None:
                 "group": "Eigene Stimmen",
             }
     for key in [k for k, v in list(VOICES.items())
-                if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE) or v.get("custom_kokoro")]:
+                if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE) or v.get("custom_kokoro")
+                or v.get("custom_ext")]:
         if key not in wanted:
             VOICES.pop(key, None)
     VOICES.update(wanted)
@@ -372,9 +417,20 @@ def is_pocket(voice_key: str) -> bool:
     return engine(voice_key) in (POCKET_ENGINE, POCKET_CLONE_ENGINE)
 
 
+def is_ext(voice_key: str) -> bool:
+    """NeuTTS / Chatterbox (eigene Python-Umgebung)?"""
+    return engine(voice_key) in EXT_ENGINES
+
+
 def is_chunked(voice_key: str) -> bool:
     """Lange Texte abschnittsweise erzeugen und schon während der Berechnung spielen."""
-    return is_qwen(voice_key) or is_pocket(voice_key)
+    return is_qwen(voice_key) or is_pocket(voice_key) or is_ext(voice_key)
+
+
+def chunk_chars(voice_key: str) -> int | None:
+    """Höchstlänge eines Abschnitts (None = Standard). NeuTTS hat ein kurzes
+    Kontextfenster (2048 Token inkl. Referenz) – lieber kleinere Stücke."""
+    return 180 if engine(voice_key) == NEUTTS_ENGINE else None
 
 
 def is_available(voice_key: str) -> bool:
@@ -383,6 +439,10 @@ def is_available(voice_key: str) -> bool:
         sync_clone_voices()
     if voice_key not in VOICES:
         return False
+    if is_ext(voice_key):
+        spec = VOICES[voice_key]
+        refs = [spec[k] for k in ("ref_wav", "ref_txt", "ref_codes") if k in spec]
+        return Path(EXT_PYTHON[spec["engine"]]).is_file() and all(Path(r).is_file() for r in refs)
     if is_pocket(voice_key):
         spec = VOICES[voice_key]
         return (importlib.util.find_spec("pocket_tts") is not None

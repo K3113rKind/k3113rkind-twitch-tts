@@ -22,7 +22,7 @@ from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
-from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, is_available, is_chunked, is_pocket, is_qwen
+from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
@@ -314,8 +314,14 @@ class ChatSpeaker:
 
     @staticmethod
     def _chunks(text: str, voice: str) -> list[str]:
-        chunks = (split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
-                  if is_chunked(voice) else [text])
+        limit = chunk_chars(voice)
+        if not is_chunked(voice):
+            chunks = [text]
+        elif limit:
+            chunks = split_for_qwen(text, max_chars=limit,
+                                    first_max=min(QWEN_FIRST_CHUNK_CHARS, limit))
+        else:
+            chunks = split_for_qwen(text, first_max=QWEN_FIRST_CHUNK_CHARS)
         return chunks or [text]
 
     @staticmethod

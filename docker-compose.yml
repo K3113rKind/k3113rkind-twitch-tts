@@ -36,5 +36,9 @@ services:
       - QWEN_SPK_MIN=${QWEN_SPK_MIN:-0.75}
       # Pocket TTS: Torch-Threads während der Berechnung (klein = oft schneller)
       - POCKET_THREADS=${POCKET_THREADS:-2}
-      # Hugging-Face-Token, nur für Pocket-TTS-Stimmklonen (Modell ist "gated")
+      # NeuTTS / Chatterbox (Test): Threads je Rechenprozess
+      - NEUTTS_THREADS=${NEUTTS_THREADS:-4}
+      - CHATTERBOX_THREADS=${CHATTERBOX_THREADS:-8}
+      # Hugging-Face-Token: Pocket-TTS-Stimmklonen und NeuTTS-Nano-German
+      # (beide "gated" – Bedingungen auf der Modellseite akzeptieren)
       - HF_TOKEN=${HF_TOKEN:-}
