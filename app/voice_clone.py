@@ -32,6 +32,7 @@ from .voices import QWEN_BASE_MODELS, ref_dir
 # Referenz – jedes falsch erkannte Wort verschlechtert den Klon.
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
 CANDIDATES = 3  # so viele Ausschnitte zur Auswahl
+MIN_SHIFT_S = 2.5  # Kandidaten unterscheiden sich in Anfang oder Ende um mindestens so viel
 PAD_S = 0.15  # Luft vor/nach dem Abschnitt
 
 
@@ -142,7 +143,7 @@ def ends_sentence(word: str) -> bool:
 
 
 def pick_windows(words, ideal: float, count: int = CANDIDATES) -> list[tuple[int, int]]:
-    """Die besten, sich nicht überschneidenden Abschnitte (bester zuerst).
+    """Die besten, hörbar verschiedenen Abschnitte (bester zuerst).
     Bewertung wie bisher: Satzgrenzen, Länge nahe am Ziel, keine langen
     Pausen, sicher erkannte Wörter."""
     lo, hi = max(ideal - 2, 3.0), ideal + 2
@@ -163,10 +164,14 @@ def pick_windows(words, ideal: float, count: int = CANDIDATES) -> list[tuple[int
             score += 4 * (sum(w.probability for w in seq) / len(seq))
             scored.append((score, i, j))
     scored.sort(reverse=True)
+    # Überschneiden ist erlaubt (bei kurzen Videos sonst nur ein Kandidat),
+    # aber die Kandidaten sollen sich hörbar unterscheiden: Anfang oder Ende
+    # mindestens MIN_SHIFT_S auseinander.
     picked: list[tuple[int, int]] = []
     for _score, i, j in scored:
         a, b = words[i].start, words[j].end
-        if all(b <= words[pi].start or a >= words[pj].end for pi, pj in picked):
+        if all(abs(a - words[pi].start) >= MIN_SHIFT_S or abs(b - words[pj].end) >= MIN_SHIFT_S
+               for pi, pj in picked):
             picked.append((i, j))
             if len(picked) >= count:
                 break
