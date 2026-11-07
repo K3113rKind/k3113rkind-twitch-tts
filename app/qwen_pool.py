@@ -16,9 +16,14 @@ kommen weitere dazu, geben die laufenden beim nächsten Rechenschritt ab
 Stürzt ein Prozess ab (z. B. Speicher), wird seine Anfrage mit Fehler
 beendet und der Prozess neu gestartet.
 
-Einschalten: QWEN_WORKERS=4 (Standard 1 = aus, alles im Hauptprozess).
+Einschalten: in der Oberfläche unter "Rechenprozesse" (je Engine 1–6) oder
+als Startwert QWEN_WORKERS=4 (Standard 1 = aus, alles im Hauptprozess).
 Speicher: je Prozess ca. 3 GB (0.6B) bzw. 7–8 GB (1.7B). Große Modelle
 laufen deshalb nur auf QWEN_WORKERS_BIG Prozessen (Standard 2).
+
+Dieselbe Mechanik gibt es auch für Pocket TTS (engine="pocket"): Ein
+Prozess rechnet dort mit POCKET_THREADS Threads, mehrere Prozesse rechnen
+mehrere Nachrichten gleichzeitig.
 """
 
 from __future__ import annotations
@@ -37,13 +42,16 @@ QWEN_WORKERS = int(os.environ.get("QWEN_WORKERS", "1") or 1)
 QWEN_WORKERS_BIG = int(os.environ.get("QWEN_WORKERS_BIG", "2") or 2)
 
 
-def _worker_main(idx: int, inq, outq, share) -> None:
+def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
     """Läuft im eigenen Prozess: Anfragen holen, rechnen, Ergebnis zurück.
     share: vom Hauptprozess laufend angepasster Thread-Anteil – wird vor
     jedem Rechenschritt übernommen (live umverteilen, wenn Nachrichten
     dazukommen oder fertig werden)."""
     logging.basicConfig(level=logging.INFO,
-                        format=f"%(asctime)s %(levelname)s qwen-{idx + 1} %(name)s: %(message)s")
+                        format=f"%(asctime)s %(levelname)s {engine_name}-{idx + 1} %(name)s: %(message)s")
+    if engine_name == "pocket":
+        _pocket_worker(inq, outq)
+        return
     import torch
 
     from .tts import QwenEngine
@@ -95,8 +103,34 @@ def _worker_main(idx: int, inq, outq, share) -> None:
             outq.put((jid, False, f"{type(exc).__name__}: {exc}"))
 
 
+def _pocket_worker(inq, outq) -> None:
+    """Pocket TTS in einem eigenen Prozess."""
+    from .pocket import PocketEngine
+
+    engine = PocketEngine()
+    while True:
+        job = inq.get()
+        if job is None:
+            return
+        jid, args = job
+        try:
+            t0 = time.perf_counter()
+            engine.load(args["language"])
+            load_s = time.perf_counter() - t0
+            t1 = time.perf_counter()
+            samples, sr = engine.synthesize(args["text"], args["language"], args.get("voice"),
+                                            args.get("ref_wav"))
+            outq.put((jid, True, (samples, time.perf_counter() - t1, load_s, 0.0, sr)))
+        except Exception as exc:
+            outq.put((jid, False, f"{type(exc).__name__}: {exc}"))
+
+
 class QwenPool:
-    def __init__(self, workers: int, total_threads: int) -> None:
+    """Mehrere Rechenprozesse für eine Engine ("qwen" oder "pocket")."""
+
+    def __init__(self, workers: int, total_threads: int, engine: str = "qwen") -> None:
+        self.engine = engine
+        self._closed = False
         self.workers = workers
         self.total_threads = max(1, total_threads)
         self._ctx = mp.get_context("spawn")  # kein fork: Torch/Threads im Elternprozess
@@ -119,26 +153,54 @@ class QwenPool:
             for i in range(self.workers):
                 self._spawn(i)
             self._started = True
-        threading.Thread(target=self._reader, name="qwen-pool-reader", daemon=True).start()
-        log.info("Qwen: %d Rechenprozesse gestartet (zusammen %d Threads)",
-                 self.workers, self.total_threads)
+        threading.Thread(target=self._reader, name=f"{self.engine}-pool-reader", daemon=True).start()
+        log.info("%s: %d Rechenprozesse gestartet (zusammen %d Threads)",
+                 self.engine, self.workers, self.total_threads)
+
+    def shutdown(self) -> None:
+        """Alle Prozesse beenden (z. B. vor dem Umstellen der Anzahl). Laufende
+        Anfragen enden mit Fehler, wartende werden abgewiesen."""
+        with self._cond:
+            self._closed = True
+            for jid, (fut, _wi) in list(self._futures.items()):
+                self._futures.pop(jid, None)
+                if not fut.done():
+                    fut.set_exception(RuntimeError("Rechenprozesse werden neu gestartet"))
+            self._cond.notify_all()
+            procs, inqs = list(self._procs), list(self._inqs)
+        for q in inqs:
+            try:
+                if q is not None:
+                    q.put(None)
+            except Exception:
+                pass
+        for p in procs:
+            if p is None:
+                continue
+            p.join(timeout=5)
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=5)
+        log.info("%s: %d Rechenprozesse beendet", self.engine, self.workers)
 
     def _spawn(self, i: int) -> None:
         q = self._ctx.Queue()
         share = self._ctx.Value("i", self.total_threads, lock=False)
         self._shares[i] = share
-        p = self._ctx.Process(target=_worker_main, args=(i, q, self._outq, share),
-                              name=f"qwen-{i + 1}", daemon=True)
+        p = self._ctx.Process(target=_worker_main, args=(i, q, self._outq, share, self.engine),
+                              name=f"{self.engine}-{i + 1}", daemon=True)
         p.start()
         self._inqs[i], self._procs[i] = q, p
 
     def _reader(self) -> None:
-        while True:
+        while not self._closed:
             try:
                 jid, ok, payload = self._outq.get(timeout=2)
             except queue.Empty:
                 self._check_dead()
                 continue
+            except (EOFError, OSError):
+                return
             with self._cond:
                 entry = self._futures.pop(jid, None)
             if entry is None:
@@ -151,11 +213,13 @@ class QwenPool:
 
     def _check_dead(self) -> None:
         with self._cond:
+            if self._closed:
+                return
             for i, p in enumerate(self._procs):
                 if p is None or p.is_alive():
                     continue
-                log.error("Qwen-Rechenprozess %d beendet (Code %s) – wird neu gestartet",
-                          i + 1, p.exitcode)
+                log.error("%s-Rechenprozess %d beendet (Code %s) – wird neu gestartet",
+                          self.engine, i + 1, p.exitcode)
                 for jid, (fut, wi) in list(self._futures.items()):
                     if wi == i:
                         self._futures.pop(jid, None)
@@ -174,8 +238,8 @@ class QwenPool:
                 self._shares[i].value = share
 
     # ------------------------------------------------------------- Anfragen
-    def _allowed(self, repo: str) -> set[int]:
-        if "1.7B" in repo:
+    def _allowed(self, repo: str | None) -> set[int]:
+        if repo and "1.7B" in repo:
             return set(range(min(self.workers, max(1, QWEN_WORKERS_BIG))))
         return set(range(self.workers))
 
@@ -183,10 +247,14 @@ class QwenPool:
         """Blockierend (im Thread aufrufen): wartet auf einen freien Prozess,
         rechnet dort und liefert (samples, Rechenzeit, Ladezeit, Decoder)."""
         self.start()
-        allowed = {worker} if worker is not None else self._allowed(args["repo"])
+        allowed = {worker} if worker is not None else self._allowed(args.get("repo"))
         with self._cond:
             while not (self._idle & allowed):
+                if self._closed:
+                    raise RuntimeError("Rechenprozesse werden neu gestartet")
                 self._cond.wait()
+            if self._closed:
+                raise RuntimeError("Rechenprozesse werden neu gestartet")
             i = min(self._idle & allowed)
             self._idle.discard(i)
             self._rebalance()

@@ -272,3 +272,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .voice-manager label.vm-item input { width: auto; margin: 0; }
 .voice-manager .vm-state { color: var(--muted); font-size: 0.85em; }
 .voice-manager .vm-state.err { color: var(--err); }
+
+/* Rechenprozesse */
+.workers-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.3rem 0; }
+.workers-row .wname { flex: 1; font-weight: 600; }
+.workers-row select { width: auto; }
+.workers-row .wstate { color: var(--muted); font-size: 0.85em; min-width: 7rem; }
+.workers-note { color: var(--warn); font-size: 0.85em; margin: 0 0 0.3rem; }

@@ -60,6 +60,9 @@ app = FastAPI(title="K3113rkind's Twitch TTS")
 
 config = ConfigStore()
 tts = TTS()
+for _engine, _count in (config.get("workers") or {}).items():
+    if _engine in tts.POOL_ENGINES:
+        tts.set_workers(_engine, _count, restart=False)
 broadcaster = Broadcaster()
 audio_stream = AudioStream(config)
 speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
@@ -102,6 +105,7 @@ def _status() -> dict:
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
         "last_perf": speaker.last_perf,
+        "workers": tts.workers_state(),
     }
 
 
@@ -413,6 +417,29 @@ async def clone_delete(name: str):
     log.info("Eigene Stimme %s gelöscht", name)
     await broadcaster.send({"type": "voices_changed"})
     return {"ok": True, "voice": config.get("voice")}
+
+
+# ------------------------------------------------- Rechenprozesse
+@app.post("/api/workers")
+async def set_workers(body: dict):
+    """Anzahl der Rechenprozesse einer Engine setzen und Prozesse neu starten."""
+    engine = str(body.get("engine", ""))
+    if engine not in tts.POOL_ENGINES:
+        raise HTTPException(400, "Unbekannte Engine.")
+    try:
+        count = min(max(int(body.get("count", 1)), 1), 6)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Ungültige Anzahl.")
+    config.update({"workers": {engine: count}})
+    speaker.skip()  # laufende Nachricht hätte sonst einen Fehler
+    await asyncio.to_thread(tts.set_workers, engine, count)
+    voice = config.get("voice")
+    # Qwen-Prozesse gleich wieder hochfahren (Modell laden), sonst wartet die
+    # erste Nachricht darauf
+    if engine == "qwen" and is_available(voice) and is_qwen(voice) and not tts.warming:
+        asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
+    log.info("Rechenprozesse %s: %d", engine, count)
+    return {"ok": True, "workers": tts.workers_state()}
 
 
 # ------------------------------------------------- Stimmen verwalten

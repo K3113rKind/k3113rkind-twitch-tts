@@ -579,7 +579,13 @@ class TTS:
         from .pocket import PocketEngine
 
         self._pocket = PocketEngine()
-        self._pool = None  # mehrere Qwen-Rechenprozesse (CPU), siehe pool_active
+        # Mehrere Rechenprozesse je Engine (CPU), siehe pool_for. Anzahl kommt
+        # aus der Konfiguration (set_workers), Startwert für Qwen QWEN_WORKERS.
+        self._pools: dict[str, object] = {}
+        from .qwen_pool import QWEN_WORKERS
+
+        self._workers: dict[str, int] = {"qwen": QWEN_WORKERS, "pocket": 1}
+        self._pool_lock = threading.Lock()
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
@@ -601,12 +607,20 @@ class TTS:
         )
         if spec.get("engine") != "qwen":
             instruct = None  # nur Preset-Stimmen verstehen Anweisungen
+        if voices_mod.is_pocket(voice_key):
+            temperature = None  # Pocket nutzt weder Temperatur noch Anweisung
         return (voice_key, ref_stamp, QWEN_SEED, QWEN_REF_DECODE_S, temperature, instruct, text)
+
+    def _cached_path(self, voice_key: str) -> bool:
+        """Läuft diese Stimme über Zwischenspeicher/Vorab-Berechnung? Qwen
+        immer, Pocket nur mit mehreren Rechenprozessen."""
+        return voices_mod.is_qwen(voice_key) or (voices_mod.is_pocket(voice_key)
+                                                 and self.parallel(voice_key))
 
     def has_result(self, text: str, voice_key: str, temperature=None, instruct=None) -> bool:
         """Liegt für diesen Text schon fertiges Audio bereit (Gruppe oder Cache)?"""
         spec = voices_mod.VOICES.get(voice_key)
-        if spec is None or not voices_mod.is_qwen(voice_key):
+        if spec is None or not self._cached_path(voice_key):
             return False
         try:
             key = self._qwen_key(voice_key, spec, temperature, instruct, text)
@@ -615,15 +629,41 @@ class TTS:
         with self._batch_lock:
             return key in self._prefetched or key in self._qwen_cache
 
+    def _pocket_compute(self, voice_key: str, spec: dict, text: str) -> SynthesisResult:
+        """Pocket rechnen – im Hauptprozess oder in einem freien Rechenprozess."""
+        pool = self.pool_for("pocket")
+        t_load = time.perf_counter()
+        if pool is None:
+            self.load(voice_key)
+        t0 = time.perf_counter()
+        if pool is not None:
+            samples, compute_s, load_s, _dec, sr = pool.submit(dict(
+                text=text, language=spec["language"], voice=spec.get("voice"),
+                ref_wav=spec.get("ref_wav")))
+        else:
+            samples, sr = self._pocket.synthesize(text, spec["language"], spec.get("voice"),
+                                                  spec.get("ref_wav"))
+            compute_s, load_s = time.perf_counter() - t0, t0 - t_load
+        samples = _resample(samples, sr, SAMPLE_RATE)
+        if len(samples) == 0:
+            raise ValueError("Kein Audio erzeugt.")
+        return SynthesisResult(
+            samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+            sample_rate=SAMPLE_RATE, compute_seconds=compute_s, load_seconds=load_s,
+        )
+
     def _qwen_compute(self, voice_key: str, spec: dict, text: str,
                       temperature=None, instruct=None) -> SynthesisResult:
-        """Qwen rechnen – im Hauptprozess oder in einem freien Rechenprozess."""
+        """Qwen (oder Pocket mit Rechenprozessen) rechnen – im Hauptprozess
+        oder in einem freien Rechenprozess."""
+        if voices_mod.is_pocket(voice_key):
+            return self._pocket_compute(voice_key, spec, text)
         instruct = instruct if spec.get("engine") == "qwen" else None
         t_load = time.perf_counter()
         self.load(voice_key)
         t0 = time.perf_counter()
         if self.pool_active:
-            samples, compute_s, load_s, decode_s = self._pool.submit(dict(
+            samples, compute_s, load_s, decode_s = self._pools["qwen"].submit(dict(
                 repo=spec["model"], speaker=spec.get("speaker"), ref_wav=spec.get("ref_wav"),
                 ref_txt=spec.get("ref_txt"), temperature=temperature, instruct=instruct,
                 text=text,
@@ -648,7 +688,7 @@ class TTS:
         """Text vorab berechnen (blockierend, im Thread aufrufen) – für die
         parallelen Rechenprozesse. synthesize() holt das Ergebnis später ab
         oder wartet, bis es fertig ist."""
-        if not voices_mod.is_qwen(voice_key) or voice_key not in voices_mod.VOICES:
+        if voice_key not in voices_mod.VOICES or not self._cached_path(voice_key):
             return False
         spec = voices_mod.VOICES[voice_key]
         key = self._qwen_key(voice_key, spec, temperature, instruct, text)
@@ -685,28 +725,97 @@ class TTS:
     @property
     def qwen_device(self) -> str | None:
         if self.pool_active:
-            return f"CPU · {self._pool.workers} Prozesse"
+            return f"CPU · {self._pools['qwen'].workers} Prozesse"
         return self._qwen.device_name
 
-    @property
-    def pool_active(self) -> bool:
-        """Mehrere Qwen-Rechenprozesse? Nur mit QWEN_WORKERS > 1 und ohne GPU."""
-        if self._pool is not None:
-            return True
-        from .qwen_pool import QWEN_WORKERS, QwenPool
+    # ------------------------------------------------ Rechenprozesse je Engine
+    POOL_ENGINES = {"qwen": "Qwen", "pocket": "Pocket TTS"}
 
-        if QWEN_WORKERS <= 1:
-            return False
+    @staticmethod
+    def _engine_of(voice_key: str) -> str | None:
+        if voices_mod.is_qwen(voice_key):
+            return "qwen"
+        if voices_mod.is_pocket(voice_key):
+            return "pocket"
+        return None
+
+    def _qwen_on_gpu(self) -> bool:
         try:
             import torch
 
-            if torch.cuda.is_available() and os.environ.get("QWEN_DEVICE", "auto") != "cpu":
-                return False  # GPU: ein Prozess ist schneller
-            threads = int(os.environ.get("QWEN_THREADS", "0") or 0) or torch.get_num_threads()
+            return torch.cuda.is_available() and os.environ.get("QWEN_DEVICE", "auto") != "cpu"
         except Exception:
             return False
-        self._pool = QwenPool(QWEN_WORKERS, threads)
-        return True
+
+    def pool_for(self, engine: str):
+        """Rechenprozesse dieser Engine, oder None (alles im Hauptprozess)."""
+        with self._pool_lock:
+            pool = self._pools.get(engine)
+            if pool is not None:
+                return pool
+            n = self._workers.get(engine, 1)
+            if n <= 1:
+                return None
+            from .qwen_pool import QwenPool
+
+            if engine == "qwen":
+                if self._qwen_on_gpu():
+                    return None  # GPU: ein Prozess ist schneller
+                try:
+                    import torch
+
+                    threads = int(os.environ.get("QWEN_THREADS", "0") or 0) or torch.get_num_threads()
+                except Exception:
+                    return None
+            else:
+                from .pocket import POCKET_THREADS
+
+                threads = POCKET_THREADS
+            pool = self._pools[engine] = QwenPool(n, threads, engine=engine)
+            return pool
+
+    def set_workers(self, engine: str, count: int, restart: bool = True) -> None:
+        """Anzahl der Rechenprozesse setzen; laufende Prozesse werden beendet
+        und beim nächsten Auftrag mit der neuen Anzahl gestartet."""
+        if engine not in self.POOL_ENGINES:
+            raise ValueError(f"Unbekannte Engine: {engine}")
+        count = min(max(int(count), 1), 6)
+        with self._pool_lock:
+            self._workers[engine] = count
+            old = self._pools.pop(engine, None) if restart else None
+        if old is not None:
+            old.shutdown()
+
+    def workers_state(self) -> dict:
+        out = {}
+        for engine, label in self.POOL_ENGINES.items():
+            pool = self._pools.get(engine)
+            note = ""
+            if engine == "qwen" and self._qwen_on_gpu():
+                note = "GPU erkannt – Qwen rechnet dort immer in einem Prozess."
+            out[engine] = {"label": label, "count": self._workers.get(engine, 1),
+                           "running": pool.workers if pool is not None and pool._started else 0,
+                           "note": note}
+        return out
+
+    def parallel(self, voice_key: str) -> bool:
+        """Rechnet diese Stimme mit mehreren Prozessen?"""
+        engine = self._engine_of(voice_key) if voice_key in voices_mod.VOICES else None
+        return engine is not None and self.pool_for(engine) is not None
+
+    def workers_for(self, voice_key: str) -> int:
+        engine = self._engine_of(voice_key) if voice_key in voices_mod.VOICES else None
+        pool = self.pool_for(engine) if engine else None
+        return pool.workers if pool is not None else 1
+
+    @property
+    def pool_active(self) -> bool:
+        """Mehrere Qwen-Rechenprozesse aktiv?"""
+        return self.pool_for("qwen") is not None
+
+    @property
+    def _pool(self):
+        return self._pools.get("qwen")
 
     @property
     def pool_workers(self) -> int:
@@ -768,7 +877,8 @@ class TTS:
         if voices_mod.is_pocket(voice_key):
             if not voices_mod.is_available(voice_key):
                 raise FileNotFoundError("Pocket TTS ist nicht installiert (Paket pocket-tts).")
-            self._pocket.load(spec["language"])
+            if self.pool_for("pocket") is None:  # sonst laden die Rechenprozesse selbst
+                self._pocket.load(spec["language"])
             self._ready = True
             return
         if voices_mod.is_qwen(voice_key):
@@ -826,7 +936,7 @@ class TTS:
             voice_key = voices_mod.DEFAULT_VOICE
 
         spec = voices_mod.VOICES[voice_key]
-        if voices_mod.is_pocket(voice_key):
+        if voices_mod.is_pocket(voice_key) and not self.parallel(voice_key):
             t_load = time.perf_counter()
             self.load(voice_key)
             t0 = time.perf_counter()
@@ -842,7 +952,7 @@ class TTS:
                 compute_seconds=time.perf_counter() - t0,
                 load_seconds=t0 - t_load,
             )
-        if voices_mod.is_qwen(voice_key):
+        if self._cached_path(voice_key):
             # Qwen kennt keine Sprechgeschwindigkeit – der Regler wirkt hier nicht.
             # Cache-Schlüssel enthält bei eigenen Stimmen die Änderungszeit der
             # Referenz – wird sie neu erzeugt oder der Text korrigiert, gilt der

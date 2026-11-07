@@ -257,7 +257,7 @@ class ChatSpeaker:
             voice = self._voice(cfg)
         except RuntimeError:
             return self._queue[0]
-        if not (is_qwen(voice) and self.tts.pool_active):
+        if not self.tts.parallel(voice):
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
         # Nur Nachrichten, deren Anfang komplett fertig ist – bei abgetrennter
@@ -330,8 +330,8 @@ class ChatSpeaker:
         Text rechnet parallel – der erste Ton kommt so deutlich früher.
         Sehr kurze Nachrichten bleiben am Stück (einzelne Wörter verschluckt
         Qwen sonst eher)."""
-        if (cfg["read_username"] and not msg.raw and is_qwen(voice)
-                and self.tts.pool_active and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
+        if (cfg["read_username"] and not msg.raw and self.tts.parallel(voice)
+                and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
             if cfg["username_style"] == "sagt":
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
                 prefix = f"{msg.username} {verb}:"
@@ -352,17 +352,17 @@ class ChatSpeaker:
             log.warning("Gruppenberechnung nicht gestartet: %s", exc)
 
     def _prefetch_inner(self) -> None:
-        if not self.tts.pool_active or not self._queue:
-            return
-        free = self.tts.pool_workers - len(self._prefetch_tasks)
-        if free <= 0:
+        if not self._queue:
             return
         cfg = self.config.as_dict()
         try:
             voice = self._voice(cfg)
         except RuntimeError:
             return
-        if not is_qwen(voice):
+        if not self.tts.parallel(voice):
+            return
+        free = self.tts.workers_for(voice) - len(self._prefetch_tasks)
+        if free <= 0:
             return
         # Kurze Nachrichten zuerst (schnell hörbar), sonst der Reihe nach.
         # Gespielt wird später die älteste fertige.
@@ -425,7 +425,7 @@ class ChatSpeaker:
         # Mehrere Rechenprozesse: alle Abschnitte gleichzeitig anstoßen
         # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
         # nächsten, während der aktuelle spielt.
-        parallel = is_qwen(voice) and self.tts.pool_active
+        parallel = self.tts.parallel(voice)
         pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
         skipped = False
 

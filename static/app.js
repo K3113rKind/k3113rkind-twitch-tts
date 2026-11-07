@@ -223,6 +223,7 @@ function applyStatus(s) {
   updateSkipButton();
   updateSayButton();
   fillVoices(s.voices || []);
+  if (s.workers) fillWorkers(s.workers);
   if (s.last_perf && !el.perf.textContent) showPerf(s.last_perf);
   if (s.error) showError(s.error); else hideError();
 }
@@ -749,3 +750,60 @@ function applyVoiceFilter() {
   }
 }
 el.voiceFilter.addEventListener("input", applyVoiceFilter);
+
+// ------------------------------------------------------ Rechenprozesse
+const workersList = $("workers-list");
+const workerRows = {};
+function fillWorkers(state) {
+  for (const [engine, w] of Object.entries(state)) {
+    let row = workerRows[engine];
+    if (!row) {
+      const div = document.createElement("div");
+      div.className = "workers-row";
+      const name = document.createElement("span");
+      name.className = "wname";
+      name.textContent = w.label;
+      const sel = document.createElement("select");
+      for (let i = 1; i <= 6; i++) {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = i === 1 ? "1 Prozess" : `${i} Prozesse`;
+        sel.append(o);
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Anwenden";
+      const st = document.createElement("span");
+      st.className = "wstate";
+      const note = document.createElement("p");
+      note.className = "workers-note hidden";
+      sel.addEventListener("change", () => { sel.dataset.dirty = "1"; });
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        st.textContent = "starte neu …";
+        const res = await fetch("/api/workers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ engine, count: Number(sel.value) }),
+        }).catch(() => null);
+        btn.disabled = false;
+        delete sel.dataset.dirty;
+        if (!res || !res.ok) {
+          const err = res ? await res.json().catch(() => ({})) : {};
+          showError(err.detail || "Rechenprozesse konnten nicht umgestellt werden.");
+          st.textContent = "";
+          return;
+        }
+        fillWorkers((await res.json()).workers);
+      });
+      div.append(name, sel, btn, st);
+      workersList.append(div, note);
+      row = workerRows[engine] = { sel, st, note };
+    }
+    if (!row.sel.dataset.dirty) row.sel.value = String(w.count);
+    row.st.textContent = w.count <= 1 ? "im Hauptprozess"
+      : w.running ? `${w.running} laufen` : "starten bei Bedarf";
+    row.note.textContent = w.note || "";
+    row.note.classList.toggle("hidden", !w.note);
+  }
+}

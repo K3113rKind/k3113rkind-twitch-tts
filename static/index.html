@@ -151,6 +151,12 @@
     </label>
     </div>
 
+    <div class="sub" id="workers-section">
+    <h3>Rechenprozesse</h3>
+    <div id="workers-list"></div>
+    <p class="hint">Mehrere Prozesse rechnen mehrere Chat-Nachrichten gleichzeitig – hilfreich, wenn sich bei vollem Chat eine Warteschlange bildet. Eine einzelne Nachricht wird dadurch nicht schneller. Jeder Prozess lädt das Modell selbst: Qwen 0.6B braucht ca. 3 GB RAM pro Prozess, 1.7B ca. 7–8 GB. „Anwenden“ startet die Prozesse neu, eine gerade gesprochene Nachricht wird dabei abgebrochen.</p>
+    </div>
+
     <div class="sub" id="clone-section">
     <h3>Eigene Stimme erstellen</h3>
     <label>Video-Link <span class="muted">(Qwen – Stimme aus einem Video oder einer Aufnahme übernehmen)</span>
@@ -185,6 +191,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=24"></script>
+<script src="/static/app.js?v=25"></script>
 </body>
 </html>

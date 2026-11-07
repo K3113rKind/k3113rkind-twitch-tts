@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     # über "Stimmen verwalten" bzw. "Aus der Liste entfernen". Nicht eingetragene
     # Stimmen folgen ihrem Standard (Katalogstimmen aus, alle anderen an).
     "voice_visibility": {},
+    # Rechenprozesse je Engine (1–6), in der GUI unter "Rechenprozesse".
+    # Startwert Qwen aus QWEN_WORKERS (älteres Setup über .env).
+    "workers": {"qwen": int(os.environ.get("QWEN_WORKERS", "1") or 1), "pocket": 1},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -152,6 +155,12 @@ class ConfigStore:
                     for k, v in value.items()
                     if str(v).strip()
                 }
+            elif key == "workers":
+                if not isinstance(value, dict):
+                    continue
+                value = {**self._data.get("workers", {}),
+                         **{str(k): min(max(int(v), 1), 6) for k, v in value.items()
+                            if str(k) in ("qwen", "pocket")}}
             elif key == "voice_visibility":
                 if not isinstance(value, dict):
                     continue
