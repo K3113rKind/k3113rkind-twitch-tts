@@ -127,7 +127,7 @@ _ABBREV = ("z. B", "z.B", "d. h", "d.h", "u. a", "u.a", "o. Ä", "u. U", "bzw", 
            "sog", "bzgl", "bspw", "usw", "St", "Mio", "Mrd", "Tsd", "Jh", "Abs", "Kap", "Std", "Min",
            "Sek", "Hr", "Fr", "geb", "gest", "ugs", "allg", "zzgl", "Tel")
 _NO_SENTENCE_END = re.compile(
-    r"(?:(?<![\w])\d+\.?|(?<![\w])[^\W\d_]\.?"  # Zahl oder einzelner Buchstabe (z. B.)
+    r"(?:(?<![\w])\d+\.?|(?<![\w'’])[^\W\d_]\.?"  # Zahl oder einzelner Buchstabe (z. B.)
     r"|(?<![\w])(?:" + "|".join(re.escape(a) for a in _ABBREV) + r")\.?)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"“”»«'’)\]]*\s+|\n+")
 
