@@ -120,6 +120,15 @@ def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
     return chunks
 
 
+# Punkt ist kein Satzende hinter einer Zahl (Ordnungszahl/Datum: "am 7.
+# November", "der 3. Platz", "07.11.") oder hinter einer Abkürzung.
+_ABBREV = ("z. B", "z.B", "d. h", "d.h", "u. a", "u.a", "o. Ä", "u. U", "bzw", "ca", "evtl",
+           "ggf", "inkl", "exkl", "vgl", "Nr", "Dr", "Prof", "Str", "mind", "max", "min", "etc",
+           "sog", "bzgl", "bspw", "usw", "St", "Mio", "Mrd", "Tsd", "Jh", "Abs", "Kap", "Std", "Min",
+           "Sek", "Hr", "Fr", "geb", "gest", "ugs", "allg", "zzgl", "Tel")
+_NO_SENTENCE_END = re.compile(
+    r"(?:(?<![\w])\d+\.?|(?<![\w])[^\W\d_]\.?"  # Zahl oder einzelner Buchstabe (z. B.)
+    r"|(?<![\w])(?:" + "|".join(re.escape(a) for a in _ABBREV) + r")\.?)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"“”»«'’)\]]*\s+|\n+")
 
 
@@ -130,6 +139,8 @@ def _sentences(text: str) -> list[str]:
     parts, pos = [], 0
     for m in _SENTENCE_END.finditer(text):
         end = m.start() + len(m.group(0).rstrip())
+        if "\n" not in m.group(0) and _NO_SENTENCE_END.search(text[pos:m.start()]):
+            continue  # "7. November", "1. FC", "z. B.", "Nr." – kein Satzende
         piece = text[pos:end].strip()
         if piece:
             parts.append(piece)
