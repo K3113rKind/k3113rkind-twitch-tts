@@ -36,7 +36,7 @@ NAME_SPLIT_MIN_CHARS = 25
 # Mehrere Rechenprozesse: lange Texte satzweise (Abschnitte bis zu dieser
 # Länge, an Satzenden geteilt) und versetzt gestartet – wie Chat-Nachrichten
 SENTENCE_CHUNK_CHARS = 180
-CHUNK_STAGGER_S = 2.0
+CHUNK_STAGGER_S = float(os.environ.get("QWEN_STAGGER_S", "0.5") or 0.5)
 # Lange Texte: so viele Sätze müssen fertig sein, bevor die Wiedergabe startet
 PREBUFFER_CHUNKS = int(os.environ.get("QWEN_PREBUFFER", "3") or 3)
 
@@ -446,7 +446,7 @@ class ChatSpeaker:
         utterance_id = None
         # Mehrere Rechenprozesse: lange Texte laufen wie ein Chat – jeder
         # Satz ist ein eigener Auftrag, und die Aufträge starten leicht
-        # versetzt (CHUNK_STAGGER_S), so wie Chat-Nachrichten nacheinander
+        # versetzt (CHUNK_STAGGER_S, 0,5 s), so wie Chat-Nachrichten nacheinander
         # eintreffen. Die Sätze werden so nacheinander fertig statt alle
         # gleichzeitig spät. Gespielt wird der Reihe nach. Ohne
         # Rechenprozesse: immer nur der nächste, während der aktuelle spielt.
