@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=23">
+<link rel="stylesheet" href="/static/style.css?v=24">
 </head>
 <body>
 <main class="panel">
@@ -42,6 +42,15 @@
     <div id="voice-manager" class="voice-manager hidden">
       <input id="voice-filter" type="search" placeholder="Stimmen filtern, z. B. Pocket, weiblich, Englisch …" autocomplete="off" spellcheck="false">
       <p class="hint">Haken setzen = Stimme erscheint in der Auswahl. Englische Kokoro-Stimmen werden beim Aktivieren einmalig geladen (wenige MB). Eigene Stimmen hier nur ausblenden – ganz löschen geht unter „Eigene Stimme erstellen“.</p>
+      <p class="hint">„Freigeben“ = Stimme steht in der Freunde-Instanz unter „Entfernte Stimmen“ zur Verfügung. Nichts anderes von hier ist dort erreichbar.</p>
+      <div class="share-info">
+        <span>Adresse für die Freunde-Instanz: <code id="share-url"></code></span>
+        <div class="share-row">
+          <input id="share-token" type="text" readonly aria-label="Freigabe-Schlüssel" spellcheck="false">
+          <button id="share-copy" type="button" class="btn-secondary">Kopieren</button>
+          <button id="share-new" type="button" class="btn-secondary" title="Alter Schlüssel wird sofort ungültig">Neu erzeugen</button>
+        </div>
+      </div>
       <div id="voice-groups"></div>
     </div>
   </section>
@@ -191,6 +200,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=25"></script>
+<script src="/static/app.js?v=26"></script>
 </body>
 </html>

@@ -268,8 +268,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .voice-manager details { border-top: 1px solid var(--line); padding: 0.3rem 0; }
 .voice-manager summary { cursor: pointer; font-weight: 600; padding: 0.2rem 0; }
 .voice-manager summary .muted { font-weight: 400; }
-.voice-manager label.vm-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0 0.15rem 0.6rem; font-weight: 400; margin: 0; }
-.voice-manager label.vm-item input { width: auto; margin: 0; }
+.voice-manager .vm-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0 0.15rem 0.6rem; }
+.voice-manager .vm-item label { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; margin: 0; }
+.voice-manager .vm-item .vm-show { flex: 1; min-width: 0; flex-wrap: wrap; }
+.voice-manager .vm-item .vm-share { flex: none; font-size: 0.85em; color: var(--muted); white-space: nowrap; }
+.voice-manager .vm-item input { width: auto; margin: 0; }
+.voice-manager .share-info { margin: 0.3rem 0 0.6rem; font-size: 0.9em; }
+.voice-manager .share-row { display: flex; gap: 0.4rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.voice-manager .share-row input { flex: 1; min-width: 12rem; font-family: monospace; }
 .voice-manager .vm-state { color: var(--muted); font-size: 0.85em; }
 .voice-manager .vm-state.err { color: var(--err); }
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import io
 import json
 import logging
 import os
@@ -10,7 +12,9 @@ import time
 import re
 import shutil
 import sys
+import secrets
 import tempfile
+import wave
 from collections import deque
 from pathlib import Path
 
@@ -20,13 +24,13 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ConfigStore
-from .player import Broadcaster, ChatSpeaker
+from .player import PAUSE_BETWEEN_CHUNKS_S, Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
 from .voices import (DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
                      is_available, is_qwen, needs_download, ref_dir, sync_clone_voices,
-                     voice_catalog)
+                     display_name, speed_instruct, voice_catalog)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -449,7 +453,8 @@ downloads: dict[str, str] = {}  # Stimmen-Schlüssel -> "läuft" / Fehlertext
 @app.get("/api/voices/catalog")
 async def voices_catalog():
     groups = await asyncio.to_thread(voice_catalog, config.get("voice_labels"),
-                                     config.get("voice_visibility"))
+                                     config.get("voice_visibility"),
+                                     config.get("shared_voices"))
     for g in groups:
         for v in g["voices"]:
             if v["key"] in downloads:
@@ -503,6 +508,110 @@ async def voices_visibility(body: dict):
     config.update(changes)
     await broadcaster.send({"type": "voices_changed"})
     return {"ok": True, "voice": config.get("voice")}
+
+
+# ------------------------------------- Freigabe für die stabile Instanz
+# Die "Freunde"-Instanz holt sich hierüber nur die ausdrücklich freigegebenen
+# Stimmen (zweites Häkchen in "Stimmen verwalten"). Alles andere – Klonen,
+# Training, nicht freigegebene eigene Stimmen – bleibt unerreichbar.
+share_lock = asyncio.Lock()  # eine Anfrage nach der anderen, schont die CPU
+
+
+def _check_share_token(request: Request) -> None:
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not token or not hmac.compare_digest(token, config.get("share_token") or ""):
+        raise HTTPException(401, "Ungültiger Freigabe-Schlüssel.")
+
+
+def _shared_voices() -> list[dict]:
+    sync_clone_voices()
+    labels = config.get("voice_labels")
+    out = []
+    for key in config.get("shared_voices") or []:
+        if key in VOICES and is_available(key):
+            spec = VOICES[key]
+            out.append({"key": key, "label": display_name(key, labels),
+                        "group": spec.get("group", "Sonstige"), "lang": spec.get("lang", "d")})
+    return out
+
+
+@app.put("/api/voices/shared")
+async def voices_shared(body: dict):
+    """Stimmen für die stabile Instanz freigeben ({Schlüssel: true/false})."""
+    sync_clone_voices()
+    shared = set(config.get("shared_voices") or [])
+    for key, on in body.items():
+        if key in VOICES and on:
+            shared.add(key)
+        else:
+            shared.discard(key)
+    config.update({"shared_voices": sorted(shared)})
+    return {"ok": True, "shared": config.get("shared_voices")}
+
+
+@app.post("/api/share/token")
+async def share_token_new():
+    """Neuen Freigabe-Schlüssel erzeugen – der alte gilt sofort nicht mehr."""
+    config.update({"share_token": secrets.token_urlsafe(24)})
+    return {"token": config.get("share_token")}
+
+
+@app.get("/api/share/voices")
+async def share_voices(request: Request):
+    _check_share_token(request)
+    return {"voices": await asyncio.to_thread(_shared_voices)}
+
+
+@app.post("/api/share/synthesize")
+async def share_synthesize(request: Request, body: dict):
+    """Text mit einer freigegebenen Stimme erzeugen, Antwort: WAV (mono, 16 bit)."""
+    _check_share_token(request)
+    voice = str(body.get("voice") or "")
+    text = str(body.get("text") or "").strip()[:1000]
+    speed = min(max(float(body.get("speed") or 1.0), 0.5), 2.0)
+    if not text:
+        raise HTTPException(400, "Kein Text.")
+    if voice not in (config.get("shared_voices") or []):
+        raise HTTPException(403, "Diese Stimme ist nicht freigegeben.")
+    sync_clone_voices()
+    if voice not in VOICES or not is_available(voice):
+        raise HTTPException(404, "Stimme hier nicht verfügbar.")
+
+    import numpy as np
+
+    # Neutraler Stil für die Freunde – Sprechtempo bei Qwen-Presets per Anweisung
+    temperature = config.get("qwen_temperature")
+    instruct = speed_instruct(None, speed)
+    chunks = ChatSpeaker._chunks(text, voice)
+    t0 = time.perf_counter()
+    async with share_lock:
+        try:
+            jobs = [asyncio.to_thread(tts.synthesize, c, voice, speed, temperature, instruct)
+                    for c in chunks]
+            if tts.parallel(voice):
+                results = await asyncio.gather(*jobs)
+            else:
+                results = [await j for j in jobs]
+        except Exception as exc:
+            log.warning("Freigabe: %s fehlgeschlagen: %s", voice, exc)
+            raise HTTPException(500, f"Erzeugung fehlgeschlagen: {exc}")
+    sr = results[0].sample_rate
+    gap = np.zeros(int(sr * PAUSE_BETWEEN_CHUNKS_S), dtype=np.float32)
+    parts = []
+    for i, r in enumerate(results):
+        if i:
+            parts.append(gap)
+        parts.append(np.asarray(r.samples, dtype=np.float32))
+    pcm = (np.clip(np.concatenate(parts), -1.0, 1.0) * 32767).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+    log.info("Freigabe: %s, %d Zeichen in %.1f s", voice, len(text), time.perf_counter() - t0)
+    return Response(buf.getvalue(), media_type="audio/wav")
 
 
 training_job: dict = {"running": False, "name": None, "done": 0, "total": 0, "error": None}

@@ -16,6 +16,7 @@ const el = {
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   hideVoice: $("hide-voice"), manageVoices: $("manage-voices"), voiceManager: $("voice-manager"),
   voiceFilter: $("voice-filter"), voiceGroups: $("voice-groups"),
+  shareUrl: $("share-url"), shareToken: $("share-token"), shareCopy: $("share-copy"), shareNew: $("share-new"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
@@ -330,6 +331,7 @@ function saveConfig() {
 }
 
 function applyConfig(c) {
+  fillShareInfo(c);
   el.channel.value = c.channel;
   el.voice.dataset.selected = c.voice;
   el.volume.value = c.volume;
@@ -712,9 +714,12 @@ async function loadVoiceCatalog() {
     sum.append(cnt);
     det.append(sum);
     for (const v of g.voices) {
+      const row = document.createElement("div");
+      row.className = "vm-item";
+      row.dataset.search = `${g.group} ${v.label}${v.shared ? " freigegeben" : ""}`.toLowerCase();
       const lab = document.createElement("label");
-      lab.className = "vm-item";
-      lab.dataset.search = `${g.group} ${v.label}`.toLowerCase();
+      lab.className = "vm-show";
+      lab.title = "In der Stimmauswahl anzeigen";
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.checked = v.visible;
@@ -722,6 +727,15 @@ async function loadVoiceCatalog() {
       const txt = document.createElement("span");
       txt.textContent = v.label;
       lab.append(cb, txt);
+      const shareLab = document.createElement("label");
+      shareLab.className = "vm-share";
+      shareLab.title = "Für die Freunde-Instanz freigeben";
+      const sb = document.createElement("input");
+      sb.type = "checkbox";
+      sb.checked = !!v.shared;
+      sb.addEventListener("change", () => setShared({ [v.key]: sb.checked }));
+      shareLab.append(sb, document.createTextNode("Freigeben"));
+      row.append(lab, shareLab);
       const state = v.download_state || (v.visible && v.download ? "wird geladen …" : v.download ? "wird beim Aktivieren geladen" : "");
       if (state) {
         const st = document.createElement("span");
@@ -729,18 +743,43 @@ async function loadVoiceCatalog() {
         st.textContent = state === "läuft" ? "wird geladen …" : state;
         lab.append(st);
       }
-      det.append(lab);
+      det.append(row);
     }
     el.voiceGroups.append(det);
   }
   applyVoiceFilter();
 }
 
+async function setShared(changes) {
+  await fetch("/api/voices/shared", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes),
+  }).catch(() => null);
+}
+
+function fillShareInfo(cfg) {
+  // Hinter einem Reverse-Proxy stimmt die Adresse im Browser nicht – dann
+  // allgemeiner Hinweis statt einer falschen URL.
+  el.shareUrl.textContent = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)
+    ? `http://${location.hostname}:${location.port || 80}` : "LAN-Adresse dieses CTs, Port 8380";
+  el.shareToken.value = cfg.share_token || "";
+}
+
+el.shareCopy.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(el.shareToken.value); el.shareCopy.textContent = "Kopiert"; }
+  catch { el.shareToken.select(); }
+  setTimeout(() => { el.shareCopy.textContent = "Kopieren"; }, 1500);
+});
+el.shareNew.addEventListener("click", async () => {
+  if (!confirm("Neuen Schlüssel erzeugen? Die Freunde-Instanz braucht danach den neuen Schlüssel.")) return;
+  const r = await fetch("/api/share/token", { method: "POST" }).then((x) => x.json()).catch(() => null);
+  if (r) el.shareToken.value = r.token;
+});
+
 function applyVoiceFilter() {
   const words = el.voiceFilter.value.toLowerCase().split(/\s+/).filter(Boolean);
   for (const det of el.voiceGroups.querySelectorAll("details")) {
     let hits = 0;
-    for (const lab of det.querySelectorAll("label.vm-item")) {
+    for (const lab of det.querySelectorAll(".vm-item")) {
       const ok = words.every((w) => lab.dataset.search.includes(w));
       lab.classList.toggle("hidden", !ok);
       if (ok) hits++;

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import re
 import tempfile
 import threading
@@ -55,6 +56,11 @@ DEFAULTS: dict[str, Any] = {
     "voice_visibility": {},
     # Rechenprozesse je Engine (1–6), in der GUI unter "Rechenprozesse".
     # Startwert Qwen aus QWEN_WORKERS (älteres Setup über .env).
+    # Freigabe für die stabile Instanz ("Freunde"): nur diese Stimmen sind über
+    # /api/share/* nutzbar, geschützt mit share_token (wird beim ersten Start
+    # erzeugt, in "Stimmen verwalten" angezeigt und neu erzeugbar).
+    "shared_voices": [],
+    "share_token": "",
     "workers": {"qwen": int(os.environ.get("QWEN_WORKERS", "1") or 1), "pocket": 1,
                 "neutts": 1, "chatterbox": 1},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
@@ -95,8 +101,12 @@ class ConfigStore:
                 loaded = json.load(fh)
             self._data = {**DEFAULTS, **{k: v for k, v in loaded.items() if k in DEFAULTS}}
             log.info("Konfiguration geladen: %s", self.path)
+            if not self._data.get("share_token"):
+                self._data["share_token"] = secrets.token_urlsafe(24)
+                self.save()
         except FileNotFoundError:
             log.info("Keine Konfiguration gefunden, schreibe Defaults nach %s", self.path)
+            self._data["share_token"] = secrets.token_urlsafe(24)
             self.save()
         except (json.JSONDecodeError, OSError) as exc:
             log.error("Konfiguration unlesbar (%s) – nutze Defaults", exc)
@@ -162,6 +172,14 @@ class ConfigStore:
                 value = {**self._data.get("workers", {}),
                          **{str(k): min(max(int(v), 1), 6) for k, v in value.items()
                             if str(k) in ("qwen", "pocket", "neutts", "chatterbox")}}
+            elif key == "shared_voices":
+                if not isinstance(value, list):
+                    continue
+                value = sorted({str(v) for v in value})
+            elif key == "share_token":
+                value = str(value).strip()
+                if len(value) < 16:
+                    continue
             elif key == "voice_visibility":
                 if not isinstance(value, dict):
                     continue

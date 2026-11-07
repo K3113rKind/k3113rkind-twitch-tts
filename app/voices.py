@@ -482,7 +482,8 @@ def available_voices(custom: dict | None = None, visibility: dict | None = None)
     ]
 
 
-def voice_catalog(custom: dict | None = None, visibility: dict | None = None) -> list[dict]:
+def voice_catalog(custom: dict | None = None, visibility: dict | None = None,
+                  shared: list | None = None) -> list[dict]:
     """Alle bekannten Stimmen nach Modell gruppiert (für "Stimmen verwalten").
     Kokoro-Katalogstimmen gelten als nutzbar, sobald das Backbone da ist – das
     Stimmpaket wird beim Aktivieren nachgeladen."""
@@ -500,5 +501,6 @@ def voice_catalog(custom: dict | None = None, visibility: dict | None = None) ->
             "key": key, "label": display_name(key, custom),
             "visible": is_visible(key, visibility),
             "download": needs_download(key),
+            "shared": key in (shared or ()),
         })
     return [{"group": g, "voices": v} for g, v in groups.items()]
