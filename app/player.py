@@ -12,7 +12,6 @@ carries status/text for the UI, no audio.
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
 import time
 from collections import deque
@@ -22,7 +21,6 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
-from .text_normalize import normalize as normalize_text
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
 from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen
 
@@ -33,12 +31,6 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 SHORT_CHARS = 60
 # Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
 NAME_SPLIT_MIN_CHARS = 25
-# Mehrere Rechenprozesse: lange Texte satzweise (Abschnitte bis zu dieser
-# Länge, an Satzenden geteilt) und versetzt gestartet – wie Chat-Nachrichten
-SENTENCE_CHUNK_CHARS = 180
-CHUNK_STAGGER_S = float(os.environ.get("QWEN_STAGGER_S", "0.5") or 0.5)
-# Lange Texte: so viele Sätze müssen fertig sein, bevor die Wiedergabe startet
-PREBUFFER_CHUNKS = int(os.environ.get("QWEN_PREBUFFER", "5") or 5)
 
 log = logging.getLogger(__name__)
 
@@ -287,7 +279,7 @@ class ChatSpeaker:
         self._queue = deque(m for m in self._queue if not m.raw)
         if self._current_raw:
             self._skip.set()
-        else:  # nur wartende entfernt -> Oberfläche trotzdem freigeben
+        else:  # nur wartende entfernt -> Oberfläche (Vorlesen-Knopf) freigeben
             await self.broadcaster.send({"type": "stop_audio"})
         await self._push_queue_state()
 
@@ -304,15 +296,14 @@ class ChatSpeaker:
         return voice
 
     @staticmethod
-    def _spoken_text(msg: QueuedMessage, cfg, voice: str, body: str | None = None) -> str:
-        body = msg.text if body is None else body
+    def _spoken_text(msg: QueuedMessage, cfg, voice: str) -> str:
         if cfg["read_username"] and not msg.raw:
             if cfg["username_style"] == "sagt":
                 # Verb passend zur Sprache der gewählten Stimme
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
-                return f"{msg.username} {verb} {body}"
-            return f"{msg.username}: {body}"
-        return body
+                return f"{msg.username} {verb} {msg.text}"
+            return f"{msg.username}: {msg.text}"
+        return msg.text
 
     @staticmethod
     def _gen_params(cfg) -> tuple:
@@ -323,11 +314,9 @@ class ChatSpeaker:
         # Tempo ihrer Referenzaufnahme.
         return cfg["speed"], cfg["qwen_temperature"], speed_instruct(instruct, cfg["speed"])
 
-    def _chunks(self, text: str, voice: str) -> list[str]:
+    @staticmethod
+    def _chunks(text: str, voice: str) -> list[str]:
         limit = chunk_chars(voice)
-        if not limit and is_chunked(voice) and self.tts.parallel(voice):
-            # Mehrere Rechenprozesse: satzweise (wie einzelne Chat-Nachrichten)
-            limit = SENTENCE_CHUNK_CHARS
         if not is_chunked(voice):
             chunks = [text]
         elif limit:
@@ -349,20 +338,15 @@ class ChatSpeaker:
         Text rechnet parallel – der erste Ton kommt so deutlich früher.
         Sehr kurze Nachrichten bleiben am Stück (einzelne Wörter verschluckt
         Qwen sonst eher)."""
-        # Qwen/Pocket: Zahlen, Daten, Abkürzungen usw. ausschreiben (nur den
-        # Nachrichtentext – Namen bleiben, wie sie sind)
-        body = normalize_text(msg.text) if (is_qwen(voice) or is_pocket(voice)) else msg.text
-        if not body:
-            body = msg.text
         if (cfg["read_username"] and not msg.raw and self.tts.parallel(voice)
-                and len(body) >= NAME_SPLIT_MIN_CHARS):
+                and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
             if cfg["username_style"] == "sagt":
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
                 prefix = f"{msg.username} {verb}:"
             else:
                 prefix = f"{msg.username}:"
-            return [prefix] + self._chunks(body, voice)
-        return self._chunks(self._spoken_text(msg, cfg, voice, body), voice)
+            return [prefix] + self._chunks(msg.text, voice)
+        return self._chunks(self._spoken_text(msg, cfg, voice), voice)
 
     def _maybe_prefetch(self) -> None:
         """Qwen mit mehreren Rechenprozessen (CPU): wartende Nachrichten
@@ -446,63 +430,19 @@ class ChatSpeaker:
         t_start = time.perf_counter()
         first_audio_s = None
         utterance_id = None
-        # Mehrere Rechenprozesse: lange Texte laufen wie ein Chat – jeder
-        # Satz ist ein eigener Auftrag, und die Aufträge starten leicht
-        # versetzt (CHUNK_STAGGER_S, 0,5 s), so wie Chat-Nachrichten nacheinander
-        # eintreffen. Die Sätze werden so nacheinander fertig statt alle
-        # gleichzeitig spät. Gespielt wird der Reihe nach. Ohne
-        # Rechenprozesse: immer nur der nächste, während der aktuelle spielt.
+        # Mehrere Rechenprozesse: alle Abschnitte gleichzeitig anstoßen
+        # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
+        # nächsten, während der aktuelle spielt.
         parallel = self.tts.parallel(voice)
-
-        def staggered(i: int, chunk: str):
-            async def run():
-                if i:
-                    await asyncio.sleep(i * CHUNK_STAGGER_S)
-                return await synth(chunk)
-            return asyncio.ensure_future(run())
-
-        pendings = ([staggered(i, c) for i, c in enumerate(chunks)] if parallel
-                    else [synth(chunks[0])])
+        pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
         skipped = False
 
-        # Fortschritt für die Oberfläche: wie viele Sätze fertig, ab wann es
-        # losgeht, welcher gerade spielt
-        prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
-                "needed": min(PREBUFFER_CHUNKS, len(chunks)) if parallel and len(chunks) > 1 else 1,
-                "workers": self.tts.workers_for(voice) if parallel else 1}
-
-        def push_progress() -> None:
-            prog["done"] = sum(1 for f in pendings if f.done() and not f.cancelled()
-                               and f.exception() is None)
-            asyncio.ensure_future(self.broadcaster.send(dict(prog)))
-
-        if len(chunks) > 1:
-            for f in pendings:
-                f.add_done_callback(lambda _f: push_progress())
-            push_progress()
-
-        # Vorpuffer: erst losspielen, wenn die ersten PREBUFFER_CHUNKS Sätze
-        # fertig sind. Die freien Prozesse rechnen währenddessen schon die
-        # nächsten Sätze – der Vorsprung überbrückt die späteren Wartezeiten.
-        if parallel and len(chunks) > 1:
-            n = prog["needed"]
-            _done, skipped = await self._wait_or_skip(asyncio.gather(*pendings[:n]))
-            if skipped:
-                for rest in pendings:
-                    rest.cancel()
-
-        for idx in range(0 if skipped else len(chunks)):
+        for idx in range(len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
-                for rest in pendings[idx + 1:]:
-                    rest.cancel()  # noch nicht gestartete Sätze verwerfen
                 break
-            if not parallel and len(pendings) < len(chunks):
-                pendings.append(synth(chunks[len(pendings)]))
-                pendings[-1].add_done_callback(lambda _f: push_progress())
-            if len(chunks) > 1:
-                prog["playing"] = idx + 1
-                push_progress()
+            if not parallel and idx + 1 < len(chunks):
+                pendings.append(synth(chunks[idx + 1]))
 
             totals["compute"] += result.compute_seconds
             totals["load"] += result.load_seconds
