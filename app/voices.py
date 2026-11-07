@@ -66,7 +66,7 @@ def config_path() -> Path:
 
 def is_available(voice_key: str) -> bool:
     """Alle Dateien vorhanden, die diese Stimme braucht?
-    Entfernte Stimmen: von der Test-Instanz aktuell freigegeben?"""
+    Freigegebene Stimmen: von der Administrativ-Instanz übertragen?"""
     if remote.is_remote(voice_key):
         return bool(remote.REGISTRY and remote.REGISTRY.get(voice_key))
     if voice_key not in VOICES:
@@ -87,7 +87,7 @@ def lang_of(voice_key: str) -> str:
 
 def available_voices() -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown),
-    danach die freigegebenen Stimmen der Test-Instanz."""
+    danach die freigegebenen Stimmen der Administrativ-Instanz."""
     local = [
         {"key": key, "label": data["label"]}
         for key, data in VOICES.items()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 from pathlib import Path
 
@@ -11,12 +12,12 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import remote
-from .config import ConfigStore
+from .config import INTERNAL_KEYS, ConfigStore
 from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import available_voices, is_available
+from .voices import DEFAULT_VOICE, available_voices, is_available
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -30,7 +31,7 @@ tts = TTS()
 broadcaster = Broadcaster()
 audio_stream = AudioStream(config)
 speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
-remote.REGISTRY = remote_voices = remote.RemoteVoices(config)
+remote.REGISTRY = remote.RemoteVoices(config)
 
 state: dict = {"twitch": None, "error": None, "loading": False}
 
@@ -65,7 +66,6 @@ def _status() -> dict:
         "loading": state["loading"],
         "error": state["error"],
         "voices": available_voices(),
-        "remote": remote_voices.status(),
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
@@ -73,9 +73,10 @@ def _status() -> dict:
 
 
 def _public_config() -> dict:
-    """Konfiguration für die GUI – der Freigabe-Schlüssel wird nie ausgeliefert."""
+    """Konfiguration für die GUI – ohne die Kopplung zur Administrativ-Instanz."""
     data = config.as_dict()
-    data["remote_token_set"] = bool(data.pop("remote_token", ""))
+    for key in INTERNAL_KEYS:
+        data.pop(key, None)
     return data
 
 
@@ -86,40 +87,33 @@ async def get_config():
 
 @app.put("/api/config")
 async def put_config(changes: dict):
-    before = (config.get("remote_url"), config.get("remote_token"))
     try:
         config.update(changes)
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Ungültiger Wert: {exc}")
-    if (config.get("remote_url"), config.get("remote_token")) != before:
-        await _refresh_remote()
     return _public_config()
 
 
-async def _refresh_remote() -> dict:
-    status = await asyncio.to_thread(remote_voices.refresh)
+@app.post("/api/remote/sync")
+async def remote_sync(request: Request, body: dict):
+    """Die Administrativ-Instanz überträgt ihre freigegebenen Stimmen
+    (Schlüssel: remote_key dieser Instanz). Leere Liste = keine mehr."""
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not token or not hmac.compare_digest(token, config.get("remote_key") or ""):
+        raise HTTPException(401, "Ungültiger Schlüssel.")
+    url = str(body.get("url") or "").strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "Adresse der Administrativ-Instanz fehlt.")
+    voices = remote.clean_voices(body.get("voices"))
+    config.set_internal({"remote_url": url, "remote_voices": voices})
+    # Gewählte Stimme nicht mehr freigegeben -> zurück zur Standardstimme
+    if remote.is_remote(config.get("voice")) and not is_available(config.get("voice")):
+        config.update({"voice": DEFAULT_VOICE})
+        speaker.skip()
+    log.info("Freigegebene Stimmen übernommen: %d von %s", len(voices), url)
     await broadcaster.send({"type": "status", **_status()})
-    return status
-
-
-@app.post("/api/remote/refresh")
-async def remote_refresh():
-    """Freigegebene Stimmen der Test-Instanz jetzt neu abfragen."""
-    return await _refresh_remote()
-
-
-@app.on_event("startup")
-async def remote_poll():
-    async def loop():
-        while True:
-            if remote_voices.enabled():
-                try:
-                    await _refresh_remote()
-                except Exception as exc:  # nie die Schleife verlieren
-                    log.warning("Entfernte Stimmen: %s", exc)
-            await asyncio.sleep(remote.REFRESH_SECONDS)
-
-    asyncio.create_task(loop())
+    return {"ok": True, "count": len(voices)}
 
 
 @app.get("/api/status")

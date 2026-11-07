@@ -100,25 +100,8 @@
     <label>Bots, die ignoriert werden <span class="muted">(einer pro Zeile)</span>
       <textarea id="bot_blocklist" rows="5" spellcheck="false"></textarea>
     </label>
-
-    <fieldset class="remote">
-      <legend>Entfernte Stimmen <span class="muted">(Test-Instanz)</span></legend>
-      <span class="muted">Freigegebene Stimmen der Test-Instanz erscheinen in der Stimmauswahl unter
-      „Entfernte Stimmen“. Ist sie nicht erreichbar, liest die Standardstimme vor.</span>
-      <label>Adresse
-        <input id="remote_url" type="text" placeholder="http://192.168.0.191:8380" autocomplete="off" spellcheck="false">
-      </label>
-      <label>Freigabe-Schlüssel <span class="muted">(steht dort unter „Stimmen verwalten“)</span>
-        <input id="remote_token" type="password" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="actions">
-        <button id="remote-off" type="button" class="btn-secondary">Trennen</button>
-        <button id="remote-save" type="button" class="btn-secondary">Verbinden</button>
-      </div>
-      <p id="remote-status" class="muted"></p>
-    </fieldset>
   </details>
 </main>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import tempfile
 import threading
 from pathlib import Path
@@ -39,10 +40,12 @@ DEFAULTS: dict[str, Any] = {
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
     "keepalive_level": 0.003,
-    # Entfernte Stimmen: Adresse und Freigabe-Schlüssel der Test-Instanz
-    # (dort in "Stimmen verwalten" angezeigt). Leer = aus.
+    # Freigegebene Stimmen der Administrativ-Instanz – nicht über die GUI
+    # änderbar, nur per /api/remote/sync (siehe remote.py). remote_key wird
+    # beim ersten Start erzeugt und dort in "Stimmen verwalten" eingetragen.
+    "remote_key": "",
     "remote_url": "",
-    "remote_token": "",
+    "remote_voices": [],
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -53,6 +56,9 @@ DEFAULTS: dict[str, Any] = {
         "fossabot",
     ],
 }
+
+
+INTERNAL_KEYS = ("remote_key", "remote_url", "remote_voices")
 
 
 class ConfigStore:
@@ -68,8 +74,12 @@ class ConfigStore:
                 loaded = json.load(fh)
             self._data = {**DEFAULTS, **{k: v for k, v in loaded.items() if k in DEFAULTS}}
             log.info("Konfiguration geladen: %s", self.path)
+            if not self._data.get("remote_key"):
+                self._data["remote_key"] = secrets.token_urlsafe(24)
+                self.save()
         except FileNotFoundError:
             log.info("Keine Konfiguration gefunden, schreibe Defaults nach %s", self.path)
+            self._data["remote_key"] = secrets.token_urlsafe(24)
             self.save()
         except (json.JSONDecodeError, OSError) as exc:
             log.error("Konfiguration unlesbar (%s) – nutze Defaults", exc)
@@ -93,6 +103,11 @@ class ConfigStore:
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self._data)
+
+    def set_internal(self, changes: dict[str, Any]) -> None:
+        """Werte setzen, die die GUI nicht ändern darf (bereits geprüft)."""
+        self._data.update({k: v for k, v in changes.items() if k in DEFAULTS})
+        self.save()
 
     def update(self, changes: dict[str, Any]) -> dict[str, Any]:
         cleaned: dict[str, Any] = {}
@@ -122,10 +137,8 @@ class ConfigStore:
                 value = str(value).strip()
                 if value not in VOICES and not is_remote(value):
                     continue  # unbekannte Stimme ignorieren
-            elif key == "remote_url":
-                value = str(value).strip().rstrip("/")
-                if value and not value.startswith(("http://", "https://")):
-                    value = "http://" + value
+            elif key in INTERNAL_KEYS:
+                continue  # nur über set_internal()
             else:
                 value = str(value).strip()
             cleaned[key] = value
