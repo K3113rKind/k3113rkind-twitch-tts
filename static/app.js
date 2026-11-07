@@ -112,16 +112,35 @@ el.audioUnlock.addEventListener("click", startStream);
 updateUnlockButton();
 
 // Während die Sprache berechnet wird: Hinweis mit mitlaufenden Sekunden.
+// Bei langen Texten zusätzlich: wie viele Sätze fertig sind und ab wann es
+// losgeht (Vorpuffer), während der Wiedergabe: welcher Satz gerade spielt.
 let genTimer = null;
+let genRender = null;
+let progress = null;
+function progressText() {
+  const p = progress;
+  if (!p || p.total < 2) return "";
+  if (!p.playing) {
+    return `${p.done} von ${p.total} Sätzen fertig · Start, sobald ${p.needed} fertig sind` +
+      (p.workers > 1 ? ` · ${p.workers} Prozesse rechnen` : "");
+  }
+  return `Satz ${p.playing} von ${p.total} · ${p.done} fertig`;
+}
+function renderNowProgress() {
+  const span = document.getElementById("now-prog");
+  if (span) span.textContent = progressText();
+}
 function showGenerating(msg) {
   stopGenerating();
+  progress = null;
   const started = Date.now();
   const render = () => {
     const s = Math.floor((Date.now() - started) / 1000);
     el.now.innerHTML = "";
     const label = document.createElement("span");
     label.className = "gen";
-    label.textContent = `Erzeuge Sprache … ${s} s`;
+    const pt = progressText();
+    label.textContent = `Erzeuge Sprache … ${s} s` + (pt ? ` · ${pt}` : "");
     const user = document.createElement("span");
     user.className = "user";
     user.textContent = msg.username;
@@ -129,11 +148,13 @@ function showGenerating(msg) {
                   document.createTextNode(": " + msg.text));
   };
   render();
+  genRender = render;
   genTimer = setInterval(render, 1000);
 }
 function stopGenerating() {
   clearInterval(genTimer);
   genTimer = null;
+  genRender = null;
 }
 
 function showNow(msg) {
@@ -142,6 +163,11 @@ function showNow(msg) {
   user.className = "user";
   user.textContent = msg.username;
   el.now.append(user, document.createTextNode(": " + msg.text));
+  const prog = document.createElement("div");
+  prog.id = "now-prog";
+  prog.className = "gen";
+  el.now.append(prog);
+  renderNowProgress();
 }
 
 /* ------------------------------------------------------------ WebSocket */
@@ -175,6 +201,10 @@ function connectWs() {
       case "generating":
         showGenerating(msg);
         break;
+      case "progress":
+        progress = msg;
+        if (genRender) genRender(); else renderNowProgress();
+        break;
       case "speak":
         stopGenerating();
         showPerf(msg.perf);
@@ -190,6 +220,8 @@ function connectWs() {
         speaking = false;
         updateSkipButton();
         el.now.textContent = "–";
+        progress = null;
+        endTestText();
         break;
       case "status":
         applyStatus(msg);
@@ -203,6 +235,7 @@ function connectWs() {
         stopGenerating();
         el.now.textContent = "–";
         showError(msg.message);
+        endTestText();
         break;
     }
   };
@@ -487,6 +520,13 @@ el.startstop.addEventListener("click", async () => {
 /* ------------------------------------------------------------- Testtext */
 // Testtext nur, wenn der Chat nicht vorgelesen wird
 let sayBusy = false;
+let testActive = false;  // Testtext wird erzeugt/gespielt -> Knopf gesperrt
+function endTestText() {
+  if (!testActive) return;
+  testActive = false;
+  sayBusy = false;
+  updateSayButton();
+}
 function updateSayButton() {
   el.sayBtn.disabled = running || sayBusy;
   el.sayText.disabled = running;
@@ -516,13 +556,15 @@ el.sayBtn.addEventListener("click", async () => {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       showError(body.detail || res.statusText);
+      sayBusy = false;
     } else {
       hideError();
+      testActive = true;  // gesperrt bis "fertig", "abgebrochen" oder Fehler
     }
   } catch (e) {
     showError("Vorlesen fehlgeschlagen: " + e);
-  } finally {
     sayBusy = false;
+  } finally {
     updateSayButton();
   }
 });

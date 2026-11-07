@@ -38,7 +38,7 @@ NAME_SPLIT_MIN_CHARS = 25
 SENTENCE_CHUNK_CHARS = 180
 CHUNK_STAGGER_S = float(os.environ.get("QWEN_STAGGER_S", "0.5") or 0.5)
 # Lange Texte: so viele Sätze müssen fertig sein, bevor die Wiedergabe startet
-PREBUFFER_CHUNKS = int(os.environ.get("QWEN_PREBUFFER", "3") or 3)
+PREBUFFER_CHUNKS = int(os.environ.get("QWEN_PREBUFFER", "5") or 5)
 
 log = logging.getLogger(__name__)
 
@@ -287,6 +287,8 @@ class ChatSpeaker:
         self._queue = deque(m for m in self._queue if not m.raw)
         if self._current_raw:
             self._skip.set()
+        else:  # nur wartende entfernt -> Oberfläche trotzdem freigeben
+            await self.broadcaster.send({"type": "stop_audio"})
         await self._push_queue_state()
 
     # ------------------------------------------------- Gruppenberechnung
@@ -463,11 +465,27 @@ class ChatSpeaker:
                     else [synth(chunks[0])])
         skipped = False
 
+        # Fortschritt für die Oberfläche: wie viele Sätze fertig, ab wann es
+        # losgeht, welcher gerade spielt
+        prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
+                "needed": min(PREBUFFER_CHUNKS, len(chunks)) if parallel and len(chunks) > 1 else 1,
+                "workers": self.tts.workers_for(voice) if parallel else 1}
+
+        def push_progress() -> None:
+            prog["done"] = sum(1 for f in pendings if f.done() and not f.cancelled()
+                               and f.exception() is None)
+            asyncio.ensure_future(self.broadcaster.send(dict(prog)))
+
+        if len(chunks) > 1:
+            for f in pendings:
+                f.add_done_callback(lambda _f: push_progress())
+            push_progress()
+
         # Vorpuffer: erst losspielen, wenn die ersten PREBUFFER_CHUNKS Sätze
         # fertig sind. Die freien Prozesse rechnen währenddessen schon die
         # nächsten Sätze – der Vorsprung überbrückt die späteren Wartezeiten.
         if parallel and len(chunks) > 1:
-            n = min(PREBUFFER_CHUNKS, len(chunks))
+            n = prog["needed"]
             _done, skipped = await self._wait_or_skip(asyncio.gather(*pendings[:n]))
             if skipped:
                 for rest in pendings:
@@ -481,6 +499,10 @@ class ChatSpeaker:
                 break
             if not parallel and len(pendings) < len(chunks):
                 pendings.append(synth(chunks[len(pendings)]))
+                pendings[-1].add_done_callback(lambda _f: push_progress())
+            if len(chunks) > 1:
+                prog["playing"] = idx + 1
+                push_progress()
 
             totals["compute"] += result.compute_seconds
             totals["load"] += result.load_seconds
