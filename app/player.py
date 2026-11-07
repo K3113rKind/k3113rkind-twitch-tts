@@ -112,6 +112,7 @@ class ChatSpeaker:
         self.dropped_total = 0
         self._emote_fetches: set[str] = set()
         self._prefetch_tasks: set[asyncio.Future] = set()
+        self._announced: QueuedMessage | None = None  # "Erzeuge Sprache" schon gezeigt
 
     def _ensure_emote_fetch(self, room_id: str) -> None:
         """Emote-Listen einmal pro Kanal im Hintergrund laden."""
@@ -234,7 +235,14 @@ class ChatSpeaker:
             self._maybe_prefetch()
             msg = self._pick_next()
             if msg is None:
-                # Alles Wartende rechnet noch -> auf die nächste fertige warten
+                # Alles Wartende rechnet noch -> auf die nächste fertige warten.
+                # Die Oberfläche zeigt schon jetzt "Erzeuge Sprache …" für die
+                # älteste wartende Nachricht (sonst wirkt der Klick tot).
+                head = self._queue[0] if self._queue else None
+                if head is not None and self._announced is not head:
+                    self._announced = head
+                    await self.broadcaster.send(
+                        {"type": "generating", "username": head.username, "text": head.text})
                 if self._prefetch_tasks:
                     await asyncio.wait(set(self._prefetch_tasks),
                                        return_when=asyncio.FIRST_COMPLETED)
@@ -414,10 +422,13 @@ class ChatSpeaker:
 
         self._skip.clear()  # ältere Klicks zählen nicht für diese Nachricht
         # Anzeige "Erzeuge Sprache …" – bei langsamen Engines (Qwen auf CPU)
-        # sonst sekundenlang kein Lebenszeichen in der GUI.
-        await self.broadcaster.send(
-            {"type": "generating", "username": msg.username, "text": msg.text}
-        )
+        # sonst sekundenlang kein Lebenszeichen in der GUI. Wurde sie für diese
+        # Nachricht schon beim Warten gesendet, nicht neu starten (Zähler).
+        if self._announced is not msg:
+            await self.broadcaster.send(
+                {"type": "generating", "username": msg.username, "text": msg.text}
+            )
+        self._announced = msg
 
         def synth(chunk: str):
             return asyncio.ensure_future(

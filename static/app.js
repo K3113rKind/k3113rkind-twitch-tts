@@ -569,6 +569,8 @@ el.sayBtn.addEventListener("click", async () => {
     } else {
       hideError();
       testActive = true;  // gesperrt bis "fertig", "abgebrochen" oder Fehler
+      // sofort Rückmeldung, bis der Server "Erzeuge Sprache" meldet
+      if (!genTimer && !speaking) showGenerating({ username: "Test", text });
     }
   } catch (e) {
     showError("Vorlesen fehlgeschlagen: " + e);
