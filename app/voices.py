@@ -143,8 +143,14 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
 # app/ext_pool.py – deren Abhängigkeiten vertragen sich nicht mit dem Rest.
 # (NeuTTS war ebenfalls eingebunden, wurde im Nov 2026 entfernt.)
 CHATTERBOX_ENGINE = "chatterbox"
+# VoxCPM2 (OpenBMB, 2B, 48 kHz, Klonen ohne Abschrift) und OmniVoice
+# (k2-fsa, 0.6B) – ebenfalls Test, nur als eigene Stimmen (Klon).
+VOXCPM_ENGINE = "voxcpm"
+OMNIVOICE_ENGINE = "omnivoice"
 EXT_PYTHON = {
     CHATTERBOX_ENGINE: os.environ.get("CHATTERBOX_PYTHON", "/opt/chatterbox/bin/python"),
+    VOXCPM_ENGINE: os.environ.get("VOXCPM_PYTHON", "/opt/voxcpm/bin/python"),
+    OMNIVOICE_ENGINE: os.environ.get("OMNIVOICE_PYTHON", "/opt/omnivoice/bin/python"),
 }
 EXT_ENGINES = tuple(EXT_PYTHON)
 VOICES["chatterbox-standard"] = {
@@ -298,6 +304,24 @@ def sync_clone_voices() -> None:
                 "group": "Eigene Stimmen",
                 "custom_ext": True,
             }
+            wanted[f"klon-voxcpm-{wav.stem}"] = {
+                "label": f"{wav.stem} · VoxCPM2 – Deutsch (Test, langsam)",
+                "engine": VOXCPM_ENGINE,
+                "ref_wav": str(wav),
+                "ref_txt": str(txt),
+                "lang": "d",
+                "group": "Eigene Stimmen",
+                "custom_ext": True,
+            }
+            wanted[f"klon-omnivoice-{wav.stem}"] = {
+                "label": f"{wav.stem} · OmniVoice – Deutsch (Test)",
+                "engine": OMNIVOICE_ENGINE,
+                "ref_wav": str(wav),
+                "ref_txt": str(txt),
+                "lang": "d",
+                "group": "Eigene Stimmen",
+                "custom_ext": True,
+            }
         for pack in sorted((folder / "kokoro").glob("*.pt")):
             wanted[f"klon-kokoro-{pack.stem}"] = {
                 "label": f"{pack.stem} · Kokoro – Deutsch (Test)",
@@ -398,7 +422,7 @@ def is_pocket(voice_key: str) -> bool:
 
 
 def is_ext(voice_key: str) -> bool:
-    """Chatterbox (eigene Python-Umgebung)?"""
+    """Chatterbox, VoxCPM2, OmniVoice (eigene Python-Umgebungen)?"""
     return engine(voice_key) in EXT_ENGINES
 
 

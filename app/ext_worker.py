@@ -1,4 +1,4 @@
-"""Rechenprozess für Engines mit eigener Python-Umgebung (Chatterbox).
+"""Rechenprozess für Engines mit eigener Python-Umgebung (Chatterbox, VoxCPM2, OmniVoice).
 
 Läuft NICHT im App-Interpreter, sondern mit dem Python der jeweiligen venv
 (/opt/chatterbox) – deren Abhängigkeiten (Torch-, Transformers-
@@ -72,7 +72,71 @@ class ChatterboxEngine:
         return out.squeeze(0).cpu().numpy(), int(self.model.sr)
 
 
-ENGINES = {"chatterbox": ChatterboxEngine}
+# --------------------------------------------------------------- VoxCPM2
+class VoxCPMEngine:
+    """OpenBMB VoxCPM2 (2B, Apache 2.0): 48 kHz, Klonen aus der Referenz
+    ohne Abschrift möglich; mit Abschrift ("ultimate cloning") genauer."""
+    THREADS = int(os.environ.get("VOXCPM_THREADS", "8") or 8)
+    MODEL = os.environ.get("VOXCPM_MODEL", "openbmb/VoxCPM2")
+    STEPS = int(os.environ.get("VOXCPM_STEPS", "10") or 10)
+    USE_TRANSCRIPT = os.environ.get("VOXCPM_USE_TRANSCRIPT", "1") not in ("0", "false", "no")
+
+    def __init__(self) -> None:
+        import inspect
+
+        import torch
+        from voxcpm import VoxCPM
+
+        torch.set_num_threads(self.THREADS)
+        kwargs = {"load_denoiser": False}
+        # torch.compile bräuchte auf der CPU einen Compiler -> abschalten, falls möglich
+        if "optimize" in inspect.signature(VoxCPM.from_pretrained).parameters:
+            kwargs["optimize"] = False
+        self.model = VoxCPM.from_pretrained(self.MODEL, **kwargs)
+
+    def synthesize(self, job: dict):
+        import numpy as np
+
+        kw = {"text": job["text"], "cfg_value": 2.0, "inference_timesteps": self.STEPS}
+        wav, txt = job.get("ref_wav"), job.get("ref_txt")
+        if wav:
+            if self.USE_TRANSCRIPT and txt and os.path.isfile(txt):
+                kw.update(prompt_wav_path=wav, reference_wav_path=wav,
+                          prompt_text=open(txt, encoding="utf-8").read().strip())
+            else:
+                kw["reference_wav_path"] = wav
+        out = self.model.generate(**kw)
+        return np.asarray(out, dtype=np.float32).reshape(-1), int(self.model.tts_model.sample_rate)
+
+
+# ------------------------------------------------------------- OmniVoice
+class OmniVoiceEngine:
+    """k2-fsa OmniVoice (0.6B, Gewichte CC-BY-NC): Klonen mit Referenz +
+    Abschrift, 24 kHz."""
+    THREADS = int(os.environ.get("OMNIVOICE_THREADS", "8") or 8)
+    MODEL = os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
+
+    def __init__(self) -> None:
+        import torch
+        from omnivoice import OmniVoice
+
+        torch.set_num_threads(self.THREADS)
+        self.model = OmniVoice.from_pretrained(self.MODEL, device_map="cpu", dtype=torch.float32)
+
+    def synthesize(self, job: dict):
+        import numpy as np
+
+        kw = {"text": job["text"]}
+        wav, txt = job.get("ref_wav"), job.get("ref_txt")
+        if wav:
+            kw["ref_audio"] = wav
+            if txt and os.path.isfile(txt):
+                kw["ref_text"] = open(txt, encoding="utf-8").read().strip()
+        audio = self.model.generate(**kw)
+        return np.asarray(audio[0], dtype=np.float32).reshape(-1), 24000
+
+
+ENGINES = {"chatterbox": ChatterboxEngine, "voxcpm": VoxCPMEngine, "omnivoice": OmniVoiceEngine}
 
 
 def main() -> None:

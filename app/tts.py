@@ -585,7 +585,7 @@ class TTS:
         from .qwen_pool import QWEN_WORKERS
 
         self._workers: dict[str, int] = {"qwen": QWEN_WORKERS, "pocket": 1,
-                                         "chatterbox": 1}
+                                         "chatterbox": 1, "voxcpm": 1, "omnivoice": 1}
         self._pool_lock = threading.Lock()
         from collections import OrderedDict
 
@@ -654,7 +654,7 @@ class TTS:
         )
 
     def _ext_compute(self, voice_key: str, spec: dict, text: str) -> SynthesisResult:
-        """Chatterbox: immer in eigenen Rechenprozessen (eigene venv)."""
+        """Chatterbox, VoxCPM2, OmniVoice: immer in eigenen Rechenprozessen (eigene venv)."""
         pool = self.pool_for(spec["engine"])
         samples, compute_s, load_s, _dec, sr = pool.submit(dict(
             text=text, ref_wav=spec.get("ref_wav"), ref_txt=spec.get("ref_txt"),
@@ -746,7 +746,8 @@ class TTS:
         return self._qwen.device_name
 
     # ------------------------------------------------ Rechenprozesse je Engine
-    POOL_ENGINES = {"qwen": "Qwen", "pocket": "Pocket TTS", "chatterbox": "Chatterbox"}
+    POOL_ENGINES = {"qwen": "Qwen", "pocket": "Pocket TTS", "chatterbox": "Chatterbox",
+                    "voxcpm": "VoxCPM2", "omnivoice": "OmniVoice"}
 
     @staticmethod
     def _engine_of(voice_key: str) -> str | None:

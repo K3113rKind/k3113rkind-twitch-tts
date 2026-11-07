@@ -38,6 +38,9 @@ services:
       - POCKET_THREADS=${POCKET_THREADS:-2}
       # Chatterbox (Test): Threads je Rechenprozess
       - CHATTERBOX_THREADS=${CHATTERBOX_THREADS:-8}
+      # VoxCPM2 / OmniVoice (Test): Threads je Rechenprozess
+      - VOXCPM_THREADS=${VOXCPM_THREADS:-8}
+      - OMNIVOICE_THREADS=${OMNIVOICE_THREADS:-8}
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen ("gated" – Bedingungen
       # auf der Modellseite akzeptieren)
       - HF_TOKEN=${HF_TOKEN:-}
