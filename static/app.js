@@ -301,16 +301,16 @@ function updateTemperatureRow() {
   el.temperatureRow.classList.toggle("hidden", !(opt && opt.dataset.qwen));
   el.styleRow.classList.toggle("hidden", !(opt && opt.dataset.styleable));
   el.styleCustom.classList.toggle("hidden", el.style.value !== "eigen");
-  // Qwen: Tempo nur grob per Anweisung (Presets), Klone sprechen im Tempo der Referenz
+  // Qwen: Presets grob per Anweisung, eigene Stimmen werden nachträglich gestreckt
   const qwen = !!(opt && opt.dataset.qwen), styleable = !!(opt && opt.dataset.styleable);
   const pocket = !!(opt && opt.dataset.pocket);
-  el.speed.disabled = (qwen && !styleable) || pocket;
+  el.speed.disabled = pocket;
   el.speedNote.classList.toggle("hidden", !qwen && !pocket);
   el.speedNote.textContent = pocket
     ? "Pocket TTS: kein Tempo-Regler, Tempo kommt aus der Stimme"
     : !qwen ? "" : styleable
     ? "Qwen: wirkt grob als Anweisung (langsamer/schneller), nicht exakt"
-    : "Eigene Stimme: Tempo kommt aus der Referenzaufnahme";
+    : "Eigene Stimme: Tempo wird nachträglich angepasst (tonhöhenneutral) – kleine Änderungen klingen am natürlichsten";
 }
 
 // Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
