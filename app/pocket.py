@@ -206,6 +206,12 @@ class PocketEngine:
         import numpy as np
         import torch
 
+        from .text_normalize import normalize
+
+        # Pocket liest Ziffern, Daten, Uhrzeiten und Abkürzungen nicht selbst
+        # (Kauderwelsch) -> vorher ausschreiben. Nur für Pocket; Qwen bleibt unverändert.
+        text = normalize(text)
+
         with self._lock:
             model = self._load_locked(language)
             state = self._state(model, language, voice, ref_wav)

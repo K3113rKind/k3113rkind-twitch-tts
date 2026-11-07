@@ -105,6 +105,29 @@ _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U000
 _URL = re.compile(r"(https?://\S+|www\.\S+)", re.I)
 
 
+_ORD_DATIVE = {"am", "vom", "zum", "zur", "im", "beim", "dem", "den", "ab", "bis", "seit"}
+_ORD_NOMINATIVE = {"der", "die", "das"}
+_ORD = re.compile(r"(?<![\d.,])(\d{1,3})\.(?=\s+(\S+))")
+
+
+def _ordinals(t: str) -> str:
+    """Ordnungszahlen: "am 7. November" -> am siebten November, "der 3. Platz"
+    -> der dritte Platz. Nur nach passendem Artikel/Präposition oder vor einem
+    Monatsnamen – "seit Mitte 2025. Danach" bleibt Jahreszahl mit Satzende."""
+    def rep(m: re.Match) -> str:
+        n = int(m.group(1))
+        if n == 0:
+            return m.group(0)
+        before = t[:m.start()].split()
+        prev = before[-1].lower() if before else ""
+        if prev in _ORD_DATIVE or m.group(2).rstrip(".,!?") in _MONTHS:
+            return ordinal_words(n)          # siebten
+        if prev in _ORD_NOMINATIVE:
+            return ordinal_words(n)[:-1]     # dritte
+        return m.group(0)
+    return _ORD.sub(rep, t)
+
+
 def normalize(text: str) -> str:
     t = _URL.sub(" Link ", text)
     t = _EMOJI.sub(" ", t)
@@ -121,6 +144,7 @@ def normalize(text: str) -> str:
             out += " " + year_words(yy + 2000 if len(y) == 2 else yy)
         return out
     t = re.sub(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})?(?!\d)", date, t)
+    t = _ordinals(t)
     # Uhrzeit 14:30 (Uhr) -> vierzehn Uhr dreißig
     def clock(m: re.Match) -> str:
         h, mi = int(m.group(1)), int(m.group(2))
