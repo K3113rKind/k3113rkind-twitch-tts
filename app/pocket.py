@@ -27,6 +27,27 @@ log = logging.getLogger(__name__)
 # (Kyutai misst mit 1–2 Kernen). Gilt nur während der Pocket-Berechnung.
 POCKET_THREADS = int(os.environ.get("POCKET_THREADS", "2") or 2)
 
+
+def _env_float(name: str) -> float | None:
+    value = os.environ.get(name, "").strip()
+    return float(value) if value else None
+
+
+# Klang-Stellschrauben (leer = Standard von Kyutai), siehe
+# kyutai-labs.github.io/pocket-tts/CLI Commands/generate/:
+#   POCKET_STEPS     Schritte des Flow-Kopfs, Standard 1 – mehr = "higher quality", langsamer
+#   POCKET_TEMP      Temperatur, Standard 0.3 – höher = ausdrucksstärker, niedriger = gleichmäßiger
+#   POCKET_EOS       Satzende-Schwelle, Standard -4.0 – kleiner = endet früher
+#   POCKET_CONTINUE  1 = interne Teilstücke eines Texts setzen das vorige fort
+#                    (teacher_force_previous_chunk) statt neu von der Vorlage –
+#                    gleichmäßigere Stimme bei längeren Texten, etwas langsamer
+POCKET_STEPS = int(os.environ.get("POCKET_STEPS", "1") or 1)
+POCKET_TEMP = _env_float("POCKET_TEMP")
+POCKET_EOS = _env_float("POCKET_EOS")
+POCKET_CONTINUE = os.environ.get("POCKET_CONTINUE", "0").strip().lower() in ("1", "true", "yes")
+# fließt in den Zwischenspeicher-Schlüssel: geänderte Einstellung -> neu rechnen
+POCKET_PARAMS = (POCKET_STEPS, POCKET_TEMP, POCKET_EOS, POCKET_CONTINUE)
+
 CLONE_HINT = (
     "Eigene Stimmen mit Pocket TTS brauchen das Modell mit Stimmklonen: auf "
     "huggingface.co/kyutai/pocket-tts die Bedingungen akzeptieren und HF_TOKEN "
@@ -89,23 +110,29 @@ class PocketEngine:
         if model is not None:
             return model
         TTSModel = _import_pocket()
+        params = dict(language=language, temp=POCKET_TEMP, sampler_decode_steps=POCKET_STEPS,
+                      eos_threshold=POCKET_EOS)
         try:
-            model = TTSModel.load_model(language=language)
+            model = TTSModel.load_model(**params)
         except Exception as exc:  # nicht im Cache -> herunterladen
             log.info("Pocket TTS %s nicht im Cache (%s)", language, type(exc).__name__)
             fetch(language)
             self._fetched.add(language)
-            model = TTSModel.load_model(language=language)
+            model = TTSModel.load_model(**params)
         # Token nachträglich eingetragen? Dann einmal das Modell mit Stimmklonen holen.
         if not model.has_voice_cloning and os.environ.get("HF_TOKEN") and language not in self._fetched:
             try:
                 fetch(language)
-                model = TTSModel.load_model(language=language)
+                model = TTSModel.load_model(**params)
             except Exception as exc:
                 log.warning("Pocket TTS: Modell mit Stimmklonen nicht ladbar: %s", exc)
             self._fetched.add(language)
-        log.info("Pocket TTS %s geladen (Stimmklonen: %s)", language,
-                 "ja" if model.has_voice_cloning else "nein")
+        log.info("Pocket TTS %s geladen (Stimmklonen: %s; Schritte %d, Temperatur %s, "
+                 "Satzende %s, Fortsetzen %s)", language,
+                 "ja" if model.has_voice_cloning else "nein", POCKET_STEPS,
+                 POCKET_TEMP if POCKET_TEMP is not None else "Standard",
+                 POCKET_EOS if POCKET_EOS is not None else "Standard",
+                 "ja" if POCKET_CONTINUE else "nein")
         self._models[language] = model
         return model
 
@@ -159,16 +186,19 @@ class PocketEngine:
             torch.set_num_threads(POCKET_THREADS)
             try:
                 t0 = time.perf_counter()
-                audio = model.generate_audio(state, text)
+                if POCKET_CONTINUE:
+                    audio = model.generate_audio(state, text, teacher_force_previous_chunk=True)
+                else:
+                    audio = model.generate_audio(state, text)
             finally:
                 torch.set_num_threads(before)
             samples = audio.detach().cpu().float().numpy().astype(np.float32)
             sr = int(model.sample_rate)
         took = time.perf_counter() - t0
         dur = len(samples) / sr if sr else 0.0
-        log.info("Pocket %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Threads)",
+        log.info("Pocket %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Threads, %d Schritte)",
                  language, Path(ref_wav).stem if ref_wav else voice, took, dur,
-                 took / dur if dur else 0.0, POCKET_THREADS)
+                 took / dur if dur else 0.0, POCKET_THREADS, POCKET_STEPS)
         return samples, sr
 
 

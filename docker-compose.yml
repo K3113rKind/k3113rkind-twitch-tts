@@ -36,6 +36,11 @@ services:
       - QWEN_SPK_MIN=${QWEN_SPK_MIN:-0.75}
       # Pocket TTS: Torch-Threads während der Berechnung (klein = oft schneller)
       - POCKET_THREADS=${POCKET_THREADS:-2}
+      # Pocket-Klang (leer = Standard): Schritte (1), Temperatur (0.3), Satzende (-4.0), Fortsetzen (0/1)
+      - POCKET_STEPS=${POCKET_STEPS:-1}
+      - POCKET_TEMP=${POCKET_TEMP:-}
+      - POCKET_EOS=${POCKET_EOS:-}
+      - POCKET_CONTINUE=${POCKET_CONTINUE:-0}
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen ("gated" – Bedingungen
       # auf der Modellseite akzeptieren)
       - HF_TOKEN=${HF_TOKEN:-}
