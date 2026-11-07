@@ -12,6 +12,7 @@ carries status/text for the UI, no audio.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import time
 from collections import deque
@@ -30,6 +31,9 @@ PAUSE_BETWEEN_CHUNKS_S = 0.25
 # Mehrere Rechenprozesse: Texte bis zu dieser Länge (Zeichen, inkl. Name)
 # gelten als kurz und werden bevorzugt gerechnet.
 SHORT_CHARS = 60
+# Lange Texte: Vorrat fertiger Abschnitte vor dem Start (je nach Prozesszahl)
+PREBUFFER_MIN = int(os.environ.get("QWEN_PREBUFFER_MIN", "3") or 3)
+PREBUFFER_MAX = int(os.environ.get("QWEN_PREBUFFER_MAX", "5") or 5)
 # Namensansage als eigener Abschnitt erst ab dieser Textlänge (Zeichen)
 NAME_SPLIT_MIN_CHARS = 25
 
@@ -456,8 +460,14 @@ class ChatSpeaker:
 
         # Nur Anzeige: Fortschritt für die Oberfläche (wie viele Abschnitte
         # fertig, welcher gerade spielt) – ändert nichts an der Berechnung.
+        workers = self.tts.workers_for(voice) if parallel else 1
+        # Lange Texte (ab 3 Abschnitten): erst losspielen, wenn ein Vorrat
+        # fertig ist – so viele Abschnitte wie Prozesse, mindestens 3, höchstens 5
+        needed = 1
+        if parallel and len(chunks) >= 3:
+            needed = min(len(chunks), max(PREBUFFER_MIN, min(PREBUFFER_MAX, workers)))
         prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
-                "needed": 1, "workers": self.tts.workers_for(voice) if parallel else 1}
+                "needed": needed, "workers": workers}
 
         def push_progress(_f=None) -> None:
             prog["done"] = sum(1 for f in pendings
@@ -469,7 +479,10 @@ class ChatSpeaker:
                 f.add_done_callback(push_progress)
             push_progress()
 
-        for idx in range(len(chunks)):
+        if needed > 1:
+            _done, skipped = await self._wait_or_skip(asyncio.gather(*pendings[:needed]))
+
+        for idx in range(0 if skipped else len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 break
