@@ -49,8 +49,15 @@ POCKET_STEPS = int(os.environ.get("POCKET_STEPS", "1") or 1)
 POCKET_TEMP = _env_float("POCKET_TEMP")
 POCKET_EOS = _env_float("POCKET_EOS")
 POCKET_CONTINUE = os.environ.get("POCKET_CONTINUE", "0").strip().lower() in ("1", "true", "yes")
+# Nachlauf nach dem Satzende in Frames à 80 ms (siehe _frames_after_eos):
+#   POCKET_EOS_FRAMES        für alle Texte (leer = Pocket schätzt selbst)
+#   POCKET_EOS_FRAMES_SHORT  für kurze Texte unter POCKET_SHORT_WORDS Wörtern (Standard 10)
+POCKET_EOS_FRAMES = int(os.environ["POCKET_EOS_FRAMES"]) if os.environ.get("POCKET_EOS_FRAMES", "").strip() else None
+POCKET_EOS_FRAMES_SHORT = int(os.environ.get("POCKET_EOS_FRAMES_SHORT", "10") or 10)
+POCKET_SHORT_WORDS = int(os.environ.get("POCKET_SHORT_WORDS", "8") or 8)
 # fließt in den Zwischenspeicher-Schlüssel: geänderte Einstellung -> neu rechnen
-POCKET_PARAMS = (POCKET_STEPS, POCKET_TEMP, POCKET_EOS, POCKET_CONTINUE, POCKET_PROMPT_MAX_S)
+POCKET_PARAMS = (POCKET_STEPS, POCKET_TEMP, POCKET_EOS, POCKET_CONTINUE, POCKET_PROMPT_MAX_S,
+                 POCKET_EOS_FRAMES, POCKET_EOS_FRAMES_SHORT, POCKET_SHORT_WORDS)
 
 CLONE_HINT = (
     "Eigene Stimmen mit Pocket TTS brauchen das Modell mit Stimmklonen: auf "
@@ -94,23 +101,33 @@ def fetch(language: str, voice: str | None = None) -> None:
              res.stdout.strip().splitlines()[-1] if res.stdout.strip() else "")
 
 
-_continue_ok: bool | None = None
+_supported: dict[str, bool] = {}
 
 
-def _supports_continue(model) -> bool:
-    """teacher_force_previous_chunk gibt es erst nach pocket-tts 4.0.1 (im
-    Repo, noch nicht im veröffentlichten Paket). Fehlt es: einmal warnen und
-    ohne Fortsetzen rechnen."""
-    global _continue_ok
-    if _continue_ok is None:
+def _supports(model, param: str) -> bool:
+    """Kennt die installierte pocket-tts-Version diesen Parameter von
+    generate_audio? (teacher_force_previous_chunk z. B. erst nach 4.0.1.)
+    Fehlt er: einmal warnen und ohne rechnen."""
+    if param not in _supported:
         import inspect
 
-        _continue_ok = "teacher_force_previous_chunk" in inspect.signature(
-            model.generate_audio).parameters
-        if not _continue_ok:
-            log.warning("POCKET_CONTINUE=1 ignoriert: Die installierte pocket-tts-Version "
-                        "kennt teacher_force_previous_chunk noch nicht.")
-    return _continue_ok
+        _supported[param] = param in inspect.signature(model.generate_audio).parameters
+        if not _supported[param]:
+            log.warning("Pocket: %s wird ignoriert – die installierte pocket-tts-Version "
+                        "kennt den Parameter nicht.", param)
+    return _supported[param]
+
+
+def _frames_after_eos(text: str) -> int | None:
+    """Wie lange nach dem erkannten Satzende weiter erzeugt wird (je 80 ms).
+    Pocket schätzt selbst nur 3–5 Frames – kurze Nachrichten klangen damit
+    abgeschnitten (bekannt, kyutai-labs/pocket-tts#174: 14 Frames halfen bei
+    kurzen Texten, erzeugten bei langen aber Nachklang). Daher nur für kurze."""
+    if POCKET_EOS_FRAMES is not None:
+        return POCKET_EOS_FRAMES
+    if len(text.split()) < POCKET_SHORT_WORDS:
+        return POCKET_EOS_FRAMES_SHORT
+    return None
 
 
 def _prompt_file(ref_wav: str) -> str:
@@ -275,14 +292,19 @@ class PocketEngine:
             torch.set_num_threads(POCKET_THREADS)
             try:
                 t0 = time.perf_counter()
-                if POCKET_CONTINUE and _supports_continue(model):
-                    audio = model.generate_audio(state, text, teacher_force_previous_chunk=True)
-                else:
-                    audio = model.generate_audio(state, text)
+                kwargs: dict = {}
+                if POCKET_CONTINUE and _supports(model, "teacher_force_previous_chunk"):
+                    kwargs["teacher_force_previous_chunk"] = True
+                frames = _frames_after_eos(text)
+                if frames is not None and _supports(model, "frames_after_eos"):
+                    kwargs["frames_after_eos"] = frames
+                audio = model.generate_audio(state, text, **kwargs)
             finally:
                 torch.set_num_threads(before)
             samples = audio.detach().cpu().float().numpy().astype(np.float32)
             sr = int(model.sample_rate)
+            # kurze Stille anhängen (wie bei Qwen): kein hartes Ende direkt nach dem letzten Laut
+            samples = np.concatenate([samples, np.zeros(int(0.15 * sr), dtype=np.float32)])
         took = time.perf_counter() - t0
         dur = len(samples) / sr if sr else 0.0
         log.info("Pocket %s/%s: %.1f s Rechenzeit für %.1f s Audio (RTF %.2f, %d Threads, %d Schritte)",
