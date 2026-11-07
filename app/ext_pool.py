@@ -1,4 +1,4 @@
-"""Rechenprozesse für Engines mit eigener Python-Umgebung (NeuTTS, Chatterbox).
+"""Rechenprozesse für Engines mit eigener Python-Umgebung (Chatterbox).
 
 Jeder Prozess ist ein eigenständiges Programm (app/ext_worker.py) im Python
 der jeweiligen venv. Gleiche Bedienung wie QwenPool: submit() wartet auf

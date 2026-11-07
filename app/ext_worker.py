@@ -1,19 +1,18 @@
-"""Rechenprozess für Engines mit eigener Python-Umgebung (NeuTTS, Chatterbox).
+"""Rechenprozess für Engines mit eigener Python-Umgebung (Chatterbox).
 
 Läuft NICHT im App-Interpreter, sondern mit dem Python der jeweiligen venv
-(/opt/neutts, /opt/chatterbox) – deren Abhängigkeiten (Torch-, Transformers-
+(/opt/chatterbox) – deren Abhängigkeiten (Torch-, Transformers-
 Versionen) vertragen sich nicht mit Kokoro/Qwen/Pocket. Deshalb nur
 Standardbibliothek + Engine-Pakete, keine Importe aus app/.
 
 Protokoll (eine JSON-Zeile je Auftrag auf stdin):
-  {"id": 1, "text": "...", "ref_wav": "/ref/x.wav", "ref_txt": "/ref/x.txt",
-   "ref_codes": "/opt/neutts/samples/greta.pt"}
+  {"id": 1, "text": "...", "ref_wav": "/ref/x.wav", "ref_txt": "/ref/x.txt"}
 Antwort auf stdout (Bibliotheks-Ausgaben gehen nach stderr):
   @@RESULT {"id": 1, "ok": true, "npy": "/tmp/…npy", "sr": 24000,
             "compute": 1.2, "load": 0.0}
 Beim Start wird das Modell sofort geladen und "@@READY" gemeldet.
 
-Aufruf: /opt/neutts/bin/python app/ext_worker.py neutts
+Aufruf: /opt/chatterbox/bin/python app/ext_worker.py chatterbox
 """
 
 from __future__ import annotations
@@ -37,49 +36,6 @@ def _send(prefix: str, payload: dict | None = None) -> None:
 
 def _log(msg: str) -> None:
     print(time.strftime("%H:%M:%S"), msg, flush=True)
-
-
-# ------------------------------------------------------------------ NeuTTS
-class NeuTTSEngine:
-    BACKBONE = os.environ.get("NEUTTS_BACKBONE", "neuphonic/neutts-nano-german-q4-gguf")
-    CODEC = os.environ.get("NEUTTS_CODEC", "neuphonic/neucodec")
-    THREADS = int(os.environ.get("NEUTTS_THREADS", "4") or 4)
-
-    def __init__(self) -> None:
-        import torch
-        import neutts.neutts as nt
-
-        torch.set_num_threads(self.THREADS)
-        # NeuTTS nimmt sonst die Hälfte aller Kerne (bei 36 Kernen: 18) –
-        # für ein 120M-Modell und mehrere Prozesse nebeneinander zu viel.
-        nt._n_perf_cores = lambda: self.THREADS
-        nt.os.cpu_count = lambda: self.THREADS
-        self.torch = torch
-        self.tts = nt.NeuTTS(backbone_repo=self.BACKBONE, backbone_device="cpu",
-                             codec_repo=self.CODEC, codec_device="cpu")
-        self._refs: dict[tuple, tuple] = {}
-
-    def _reference(self, job: dict):
-        codes_file = job.get("ref_codes")
-        wav, txt = job.get("ref_wav"), job.get("ref_txt")
-        src = codes_file or wav
-        key = (src, os.path.getmtime(src), txt and os.path.getmtime(txt))
-        if key not in self._refs:
-            text = open(txt, encoding="utf-8").read().strip()
-            if codes_file:
-                codes = self.torch.load(codes_file, map_location="cpu")
-            else:
-                t0 = time.perf_counter()
-                codes = self.tts.encode_reference(wav)
-                _log(f"Referenz {os.path.basename(wav)} kodiert in {time.perf_counter() - t0:.1f} s")
-            self._refs[key] = (codes, text)
-        return self._refs[key]
-
-    def synthesize(self, job: dict):
-        codes, text = self._reference(job)
-        wav = self.tts.infer(job["text"], codes, text,
-                             temperature=float(job.get("temperature") or 1.0))
-        return wav, 24000
 
 
 # -------------------------------------------------------------- Chatterbox
@@ -116,7 +72,7 @@ class ChatterboxEngine:
         return out.squeeze(0).cpu().numpy(), int(self.model.sr)
 
 
-ENGINES = {"neutts": NeuTTSEngine, "chatterbox": ChatterboxEngine}
+ENGINES = {"chatterbox": ChatterboxEngine}
 
 
 def main() -> None:

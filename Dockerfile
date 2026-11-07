@@ -52,31 +52,14 @@ RUN TORCH_BEFORE=$(python -c "import torch; print(torch.__version__)") \
     && python -c "import torch, sys; v=torch.__version__; print('Torch nach Pocket TTS:', v); sys.exit(v != '$TORCH_BEFORE')" \
     && python -c "import pocket_tts; print('pocket-tts', __import__('importlib.metadata').metadata.version('pocket-tts'))"
 
-# NeuTTS (Neuphonic) und Chatterbox Multilingual (Resemble AI) – Test.
-# Beide pinnen eigene Torch-/Transformers-Versionen, die sich nicht mit
-# Kokoro/Qwen/Pocket vertragen. Deshalb je eine eigene venv, die App spricht
-# sie über app/ext_worker.py als Rechenprozess an. Immer CPU-Torch.
-# Abschalten: --build-arg EXTRA_ENGINES="" (oder nur eine der beiden).
-ARG EXTRA_ENGINES="neutts chatterbox"
+# Chatterbox Multilingual (Resemble AI) – Test. Pinnt eigene Torch-/
+# Transformers-Versionen, die sich nicht mit Kokoro/Qwen/Pocket vertragen.
+# Deshalb eine eigene venv, die App spricht sie über app/ext_worker.py als
+# Rechenprozess an. Immer CPU-Torch. Abschalten: --build-arg EXTRA_ENGINES=""
+# (NeuTTS war hier ebenfalls eingebaut und wurde im Nov 2026 wieder entfernt:
+# schlechter Klang, eigene Stimmen brachen nach dem ersten Wort ab, RTF >2.)
+ARG EXTRA_ENGINES="chatterbox"
 ARG CPU_TORCH_INDEX=https://download.pytorch.org/whl/cpu
-RUN case " $EXTRA_ENGINES " in *" neutts "*) \
-      apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
-      && python -m venv /opt/neutts \
-      && /opt/neutts/bin/pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url "$CPU_TORCH_INDEX" \
-      && /opt/neutts/bin/pip install --no-cache-dir "neutts[llama]" "torch==2.8.0" "torchaudio==2.8.0" \
-           --extra-index-url "$CPU_TORCH_INDEX" \
-      && for v in 0.13.0 0.12.0 0.11.0 0.10.0; do \
-           /opt/neutts/bin/python -c "import neutts" >/dev/null 2>&1 && break; \
-           echo "neucodec/torchtune braucht ältere torchao – versuche $v"; \
-           /opt/neutts/bin/pip install --no-cache-dir "torchao==$v" --extra-index-url "$CPU_TORCH_INDEX" || true; \
-         done \
-      && mkdir -p /opt/neutts/samples \
-      && for f in greta.wav greta.txt greta.pt; do \
-           python -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" \
-             "https://raw.githubusercontent.com/neuphonic/neutts/main/samples/$f" "/opt/neutts/samples/$f"; done \
-      && /opt/neutts/bin/python -c "import neutts, llama_cpp; print('neutts ok')" \
-      && apt-get purge -y build-essential cmake && apt-get autoremove -y \
-      && rm -rf /var/lib/apt/lists/* ;; esac
 RUN case " $EXTRA_ENGINES " in *" chatterbox "*) \
       python -m venv /opt/chatterbox \
       && /opt/chatterbox/bin/pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 --index-url "$CPU_TORCH_INDEX" \

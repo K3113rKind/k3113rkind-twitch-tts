@@ -65,7 +65,7 @@ DEFAULTS: dict[str, Any] = {
     "prod_url": "",
     "share_self_url": "",
     "workers": {"qwen": int(os.environ.get("QWEN_WORKERS", "1") or 1), "pocket": 1,
-                "neutts": 1, "chatterbox": 1},
+                "chatterbox": 1},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -170,7 +170,7 @@ class ConfigStore:
                     continue
                 value = {**self._data.get("workers", {}),
                          **{str(k): min(max(int(v), 1), 6) for k, v in value.items()
-                            if str(k) in ("qwen", "pocket", "neutts", "chatterbox")}}
+                            if str(k) in ("qwen", "pocket", "chatterbox")}}
             elif key in ("prod_url", "share_self_url"):
                 value = str(value).strip().rstrip("/")
                 if value and not value.startswith(("http://", "https://")):

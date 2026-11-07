@@ -138,26 +138,15 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
             "group": _name,
         }
 
-# --- NeuTTS / Chatterbox (Test) ---------------------------------------------
-# Laufen in eigenen Python-Umgebungen (/opt/neutts, /opt/chatterbox) über
+# --- Chatterbox (Test) -------------------------------------------------------
+# Läuft in einer eigenen Python-Umgebung (/opt/chatterbox) über
 # app/ext_pool.py – deren Abhängigkeiten vertragen sich nicht mit dem Rest.
-NEUTTS_ENGINE = "neutts"
+# (NeuTTS war ebenfalls eingebunden, wurde im Nov 2026 entfernt.)
 CHATTERBOX_ENGINE = "chatterbox"
 EXT_PYTHON = {
-    NEUTTS_ENGINE: os.environ.get("NEUTTS_PYTHON", "/opt/neutts/bin/python"),
     CHATTERBOX_ENGINE: os.environ.get("CHATTERBOX_PYTHON", "/opt/chatterbox/bin/python"),
 }
 EXT_ENGINES = tuple(EXT_PYTHON)
-NEUTTS_SAMPLES = Path(os.environ.get("NEUTTS_SAMPLES", "/opt/neutts/samples"))
-
-VOICES["neutts-greta"] = {
-    "label": "NeuTTS · Greta – Deutsch, weiblich (Test)",
-    "engine": NEUTTS_ENGINE,
-    "ref_codes": str(NEUTTS_SAMPLES / "greta.pt"),
-    "ref_txt": str(NEUTTS_SAMPLES / "greta.txt"),
-    "lang": "d",
-    "group": "NeuTTS",
-}
 VOICES["chatterbox-standard"] = {
     "label": "Chatterbox · Standardstimme – Deutsch (Test, langsam)",
     "engine": CHATTERBOX_ENGINE,
@@ -301,15 +290,6 @@ def sync_clone_voices() -> None:
                     "lang": "d",
                     "group": "Eigene Stimmen",
                 }
-            wanted[f"klon-neutts-{wav.stem}"] = {
-                "label": f"{wav.stem} · NeuTTS – Deutsch (Test)",
-                "engine": NEUTTS_ENGINE,
-                "ref_wav": str(wav),
-                "ref_txt": str(txt),
-                "lang": "d",
-                "group": "Eigene Stimmen",
-                "custom_ext": True,
-            }
             wanted[f"klon-chatterbox-{wav.stem}"] = {
                 "label": f"{wav.stem} · Chatterbox – Deutsch (Test, langsam)",
                 "engine": CHATTERBOX_ENGINE,
@@ -418,7 +398,7 @@ def is_pocket(voice_key: str) -> bool:
 
 
 def is_ext(voice_key: str) -> bool:
-    """NeuTTS / Chatterbox (eigene Python-Umgebung)?"""
+    """Chatterbox (eigene Python-Umgebung)?"""
     return engine(voice_key) in EXT_ENGINES
 
 
@@ -428,9 +408,8 @@ def is_chunked(voice_key: str) -> bool:
 
 
 def chunk_chars(voice_key: str) -> int | None:
-    """Höchstlänge eines Abschnitts (None = Standard). NeuTTS hat ein kurzes
-    Kontextfenster (2048 Token inkl. Referenz) – lieber kleinere Stücke."""
-    return 180 if engine(voice_key) == NEUTTS_ENGINE else None
+    """Höchstlänge eines Abschnitts (None = Standard)."""
+    return None
 
 
 def is_available(voice_key: str) -> bool:
