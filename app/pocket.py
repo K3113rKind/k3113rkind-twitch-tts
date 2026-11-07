@@ -90,6 +90,25 @@ def fetch(language: str, voice: str | None = None) -> None:
              res.stdout.strip().splitlines()[-1] if res.stdout.strip() else "")
 
 
+_continue_ok: bool | None = None
+
+
+def _supports_continue(model) -> bool:
+    """teacher_force_previous_chunk gibt es erst nach pocket-tts 4.0.1 (im
+    Repo, noch nicht im veröffentlichten Paket). Fehlt es: einmal warnen und
+    ohne Fortsetzen rechnen."""
+    global _continue_ok
+    if _continue_ok is None:
+        import inspect
+
+        _continue_ok = "teacher_force_previous_chunk" in inspect.signature(
+            model.generate_audio).parameters
+        if not _continue_ok:
+            log.warning("POCKET_CONTINUE=1 ignoriert: Die installierte pocket-tts-Version "
+                        "kennt teacher_force_previous_chunk noch nicht.")
+    return _continue_ok
+
+
 class PocketEngine:
     def __init__(self) -> None:
         self._models: dict[str, object] = {}
@@ -186,7 +205,7 @@ class PocketEngine:
             torch.set_num_threads(POCKET_THREADS)
             try:
                 t0 = time.perf_counter()
-                if POCKET_CONTINUE:
+                if POCKET_CONTINUE and _supports_continue(model):
                     audio = model.generate_audio(state, text, teacher_force_previous_chunk=True)
                 else:
                     audio = model.generate_audio(state, text)
