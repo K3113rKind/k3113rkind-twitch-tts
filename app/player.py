@@ -461,10 +461,10 @@ class ChatSpeaker:
         # Nur Anzeige: Fortschritt für die Oberfläche (wie viele Abschnitte
         # fertig, welcher gerade spielt) – ändert nichts an der Berechnung.
         workers = self.tts.workers_for(voice) if parallel else 1
-        # Lange Texte (ab 3 Abschnitten): erst losspielen, wenn ein Vorrat
+        # Lange Testtexte (ab 3 Abschnitten): erst losspielen, wenn ein Vorrat
         # fertig ist – so viele Abschnitte wie Prozesse, mindestens 3, höchstens 5
         needed = 1
-        if parallel and len(chunks) >= 3:
+        if parallel and msg.raw and len(chunks) >= 3:  # nur Testtext, nie Chat
             needed = min(len(chunks), max(PREBUFFER_MIN, min(PREBUFFER_MAX, workers)))
         prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
                 "needed": needed, "workers": workers}
