@@ -41,9 +41,10 @@ def _env_float(name: str) -> float | None:
 #   POCKET_CONTINUE  1 = interne Teilstücke eines Texts setzen das vorige fort
 #                    (teacher_force_previous_chunk) statt neu von der Vorlage –
 #                    gleichmäßigere Stimme bei längeren Texten, etwas langsamer
-# Längste eigene Vorlage für Pocket (s). Mit 25 s kam Kauderwelsch, 12 s lief
+# Längste eigene Vorlage für Pocket (s). Kyutai trainiert mit Vorlagen bis 5 s
+# (training/configs: max_voice_prompt_sec); 25 s ergab Kauderwelsch, 12 s lief
 # sauber – längere Vorlagen werden an einer Sprechpause davor gekürzt.
-POCKET_PROMPT_MAX_S = float(os.environ.get("POCKET_PROMPT_MAX_S", "15") or 15)
+POCKET_PROMPT_MAX_S = float(os.environ.get("POCKET_PROMPT_MAX_S", "12") or 12)
 POCKET_STEPS = int(os.environ.get("POCKET_STEPS", "1") or 1)
 POCKET_TEMP = _env_float("POCKET_TEMP")
 POCKET_EOS = _env_float("POCKET_EOS")
