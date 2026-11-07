@@ -21,6 +21,8 @@ services:
     environment:
       - TZ=Europe/Berlin
       - HF_HOME=/hf
+      # weniger Speicher-Verschnitt bei vielen Threads (glibc), gibt Modellspeicher eher zurück
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
       # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren Kerne
       - QWEN_THREADS=${QWEN_THREADS:-0}
       # Qwen auf der CPU: so viele parallele Rechenprozesse (1 = aus).

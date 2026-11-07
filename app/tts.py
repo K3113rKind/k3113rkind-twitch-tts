@@ -199,6 +199,20 @@ DISK_CACHE_DIR = Path(os.environ.get(
 DISK_CACHE_MAX_MB = int(os.environ.get("TTS_CACHE_MAX_MB", "2048") or 0)
 
 
+def release_memory() -> None:
+    """Freigegebenen Speicher wirklich ans System zurückgeben. glibc behält
+    sonst die Seiten eines entladenen Modells im Prozess: Nach einem Wechsel
+    1.7B -> 0.6B belegte jeder Rechenprozess beide Modelle, der Container lief
+    voll (96 % RAM) und alles wurde 20- bis 50-mal langsamer (das System warf
+    ständig Datei-Cache weg und las ihn neu)."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 class DiskCache:
     def __init__(self, folder: Path, max_mb: int) -> None:
         self.folder, self.max_bytes = folder, max_mb * 2**20
@@ -390,6 +404,7 @@ class QwenEngine:
             self._model = None
             self._clone_prompts.clear()
             gc.collect()
+            release_memory()
             threads = int(os.environ.get("QWEN_THREADS", "0") or 0)
             if threads > 0:
                 torch.set_num_threads(threads)

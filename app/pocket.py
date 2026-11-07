@@ -186,6 +186,17 @@ class PocketEngine:
         model = self._models.get(language)
         if model is not None:
             return model
+        # Nur ein Pocket-Modell je Prozess: beim Wechsel (z. B. german ->
+        # german_24l) das alte samt Stimmen freigeben statt beide zu halten.
+        if self._models:
+            import gc
+
+            from .tts import release_memory
+
+            self._models.clear()
+            self._states.clear()
+            gc.collect()
+            release_memory()
         TTSModel = _import_pocket()
         # Nur ausdrücklich gesetzte Werte übergeben – sonst exakt der Aufruf wie
         # vorher. Die veröffentlichte Version verträgt z. B. None nicht als
