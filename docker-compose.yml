@@ -38,6 +38,8 @@ services:
       - POCKET_THREADS=${POCKET_THREADS:-2}
       # NeuTTS / Chatterbox (Test): Threads je Rechenprozess
       - NEUTTS_THREADS=${NEUTTS_THREADS:-4}
+      # NeuTTS-Sprachmodell: q4 (Standard, klein) oder q8 (bessere Qualität)
+      - NEUTTS_BACKBONE=${NEUTTS_BACKBONE:-neuphonic/neutts-nano-german-q4-gguf}
       - CHATTERBOX_THREADS=${CHATTERBOX_THREADS:-8}
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen und NeuTTS-Nano-German
       # (beide "gated" – Bedingungen auf der Modellseite akzeptieren)
