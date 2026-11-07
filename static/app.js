@@ -121,10 +121,12 @@ function progressText() {
   const p = progress;
   if (!p || p.total < 2) return "";
   if (!p.playing) {
-    return `${p.done} von ${p.total} Sätzen fertig · Start, sobald ${p.needed} fertig sind` +
-      (p.workers > 1 ? ` · ${p.workers} Prozesse rechnen` : "");
+    return `${p.done} von ${p.total} Abschnitten fertig` +
+      (p.needed > 1 ? ` · Start, sobald ${p.needed} fertig sind` : "") +
+      (p.workers > 1 ? ` · ${p.workers} Prozesse` : "");
   }
-  return `Satz ${p.playing} von ${p.total} · ${p.done} fertig`;
+  return `Abschnitt ${p.playing} von ${p.total} · ${p.done} fertig` +
+    (p.done <= p.playing && p.playing < p.total ? " · nächster rechnet noch" : "");
 }
 function renderNowProgress() {
   const span = document.getElementById("now-prog");

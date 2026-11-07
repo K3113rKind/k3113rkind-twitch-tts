@@ -39,3 +39,5 @@ services:
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen ("gated" – Bedingungen
       # auf der Modellseite akzeptieren)
       - HF_TOKEN=${HF_TOKEN:-}
+      # Dauerhafter Zwischenspeicher fertiger Sätze (config/tts-cache), 0 = aus
+      - TTS_CACHE_MAX_MB=${TTS_CACHE_MAX_MB:-2048}

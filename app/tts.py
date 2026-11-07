@@ -188,6 +188,80 @@ QWEN_SEED = int(os.environ.get("QWEN_SEED", "1234") or 1234)
 # kommt dann sofort statt nach 10–20 s Rechenzeit.
 QWEN_CACHE_SIZE = 64
 
+# Dauerhafter Zwischenspeicher auf der Platte (übersteht Neustarts): fertige
+# Sätze/Namensansagen der neuronalen Stimmen. Schlüssel = Stimme + Referenz-
+# Änderungszeit + Einstellungen + Text -> neu geklonte Stimme oder geänderte
+# Betonung erzeugen automatisch neue Einträge. Älteste fliegen raus, wenn
+# TTS_CACHE_MAX_MB überschritten wird. 0 = aus.
+DISK_CACHE_DIR = Path(os.environ.get(
+    "TTS_CACHE_DIR",
+    str(Path(os.environ.get("CONFIG_PATH", "/config/config.json")).parent / "tts-cache")))
+DISK_CACHE_MAX_MB = int(os.environ.get("TTS_CACHE_MAX_MB", "2048") or 0)
+
+
+class DiskCache:
+    def __init__(self, folder: Path, max_mb: int) -> None:
+        self.folder, self.max_bytes = folder, max_mb * 2**20
+        self._puts = 0
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.max_bytes > 0
+
+    def _path(self, key: tuple) -> Path:
+        import hashlib
+
+        h = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
+        return self.folder / h[:2] / f"{h}.npy"
+
+    def has(self, key: tuple) -> bool:
+        return self.enabled and self._path(key).is_file()
+
+    def get(self, key: tuple):
+        if not self.enabled:
+            return None
+        path = self._path(key)
+        try:
+            import numpy as np
+
+            data = np.load(path)
+            os.utime(path)  # zuletzt benutzt -> fliegt als Letztes raus
+            return data.astype(np.float32) / 32767.0
+        except (OSError, ValueError):
+            return None
+
+    def put(self, key: tuple, samples) -> None:
+        if not self.enabled or samples is None or len(samples) == 0:
+            return
+        import numpy as np
+
+        path = self._path(key)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npy")
+            np.save(tmp, (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16))
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("Zwischenspeicher: Schreiben fehlgeschlagen: %s", exc)
+            return
+        with self._lock:
+            self._puts += 1
+            if self._puts % 50 == 0:
+                self._prune()
+
+    def _prune(self) -> None:
+        files = [(f.stat().st_mtime, f.stat().st_size, f) for f in self.folder.glob("*/*.npy")]
+        total = sum(size for _, size, _ in files)
+        if total <= self.max_bytes:
+            return
+        for _, size, f in sorted(files):
+            f.unlink(missing_ok=True)
+            total -= size
+            if total <= self.max_bytes * 0.9:
+                break
+        log.info("Zwischenspeicher aufgeräumt: %.0f MB", total / 2**20)
+
 # Eigene Stimmen: Qwen wandelt bei jedem Satz die komplette Referenz (~10 s)
 # erneut mit in Ton um und schneidet sie danach ab – nur für einen sauberen
 # Übergang. Gemessen kostete das ein Drittel der Rechenzeit. Als Übergang
@@ -574,6 +648,7 @@ class TTS:
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
+        self._disk = DiskCache(DISK_CACHE_DIR, DISK_CACHE_MAX_MB)
         # Gruppenberechnung (Batching): fertige Ergebnisse warten hier auf
         # ihre Nachricht; laufende Gruppen melden sich über ein Event.
         self._prefetched: OrderedDict = OrderedDict()
@@ -612,7 +687,9 @@ class TTS:
         except OSError:
             return False
         with self._batch_lock:
-            return key in self._prefetched or key in self._qwen_cache
+            if key in self._prefetched or key in self._qwen_cache:
+                return True
+        return self._disk.has(key)
 
     def _pocket_compute(self, voice_key: str, spec: dict, text: str) -> SynthesisResult:
         """Pocket rechnen – im Hauptprozess oder in einem freien Rechenprozess."""
@@ -694,11 +771,13 @@ class TTS:
         spec = voices_mod.VOICES[voice_key]
         key = self._qwen_key(voice_key, spec, temperature, instruct, text)
         with self._batch_lock:
-            if key in self._qwen_cache or key in self._prefetched or key in self._inflight:
+            if (key in self._qwen_cache or key in self._prefetched or key in self._inflight
+                    or self._disk.has(key)):
                 return False
             event = self._inflight[key] = threading.Event()
         try:
             result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
+            self._disk.put(key, result.samples)
             with self._batch_lock:
                 self._prefetched[key] = result
                 while len(self._prefetched) > QWEN_CACHE_SIZE:
@@ -999,7 +1078,17 @@ class TTS:
                     samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
                     sample_rate=SAMPLE_RATE, cached=True,
                 )
+            samples = self._disk.get(key)
+            if samples is not None:
+                self._qwen_cache[key] = samples
+                while len(self._qwen_cache) > QWEN_CACHE_SIZE:
+                    self._qwen_cache.popitem(last=False)
+                return SynthesisResult(
+                    samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
+                    sample_rate=SAMPLE_RATE, cached=True,
+                )
             result = self._qwen_compute(voice_key, spec, text, temperature, instruct)
+            self._disk.put(key, result.samples)
             self._qwen_cache[key] = result.samples
             while len(self._qwen_cache) > QWEN_CACHE_SIZE:
                 self._qwen_cache.popitem(last=False)

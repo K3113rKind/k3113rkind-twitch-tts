@@ -448,12 +448,31 @@ class ChatSpeaker:
         pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
         skipped = False
 
+        # Nur Anzeige: Fortschritt für die Oberfläche (wie viele Abschnitte
+        # fertig, welcher gerade spielt) – ändert nichts an der Berechnung.
+        prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
+                "needed": 1, "workers": self.tts.workers_for(voice) if parallel else 1}
+
+        def push_progress(_f=None) -> None:
+            prog["done"] = sum(1 for f in pendings
+                               if f.done() and not f.cancelled() and f.exception() is None)
+            asyncio.ensure_future(self.broadcaster.send(dict(prog)))
+
+        if len(chunks) > 1:
+            for f in pendings:
+                f.add_done_callback(push_progress)
+            push_progress()
+
         for idx in range(len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 break
             if not parallel and idx + 1 < len(chunks):
                 pendings.append(synth(chunks[idx + 1]))
+                pendings[-1].add_done_callback(push_progress)
+            if len(chunks) > 1:
+                prog["playing"] = idx + 1
+                push_progress()
 
             totals["compute"] += result.compute_seconds
             totals["load"] += result.load_seconds
