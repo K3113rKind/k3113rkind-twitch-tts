@@ -232,6 +232,22 @@ async def apply_voice():
     return _status()
 
 
+@app.post("/api/warmup")
+async def warmup_voice(body: dict):
+    """Qwen-Stimme schon beim Auswählen im Dropdown vorladen (vor "Wechseln").
+    Läuft der Chat mit einem anderen Qwen-Modell, wird nicht umgeladen – das
+    würde die laufende Ausgabe ausbremsen."""
+    voice = str(body.get("voice", ""))
+    if not is_available(voice) or not is_qwen(voice) or tts.warming:
+        return {"ok": False}
+    current = config.get("voice")
+    if (state["twitch"] is not None and is_available(current) and is_qwen(current)
+            and VOICES[current].get("model") != VOICES[voice].get("model")):
+        return {"ok": False, "reason": "chat"}
+    asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
+    return {"ok": True}
+
+
 @app.post("/api/preview")
 async def preview():
     """Hörprobe: fester Satz mit der eingestellten Stimme, ohne Twitch-Chat."""

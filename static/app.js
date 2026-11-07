@@ -408,7 +408,16 @@ for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.rea
                      el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
-el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; updateTemperatureRow(); });
+el.voice.addEventListener("change", () => {
+  el.voice.dataset.selected = el.voice.value;
+  updateTemperatureRow();
+  // Qwen-Stimme schon beim Auswählen vorladen, nicht erst bei "Wechseln"
+  const opt = el.voice.selectedOptions[0];
+  if (opt && opt.dataset.qwen) {
+    fetch("/api/warmup", { method: "POST", headers: { "Content-Type": "application/json" },
+                           body: JSON.stringify({ voice: el.voice.value }) }).catch(() => {});
+  }
+});
 el.style.addEventListener("change", () => { updateTemperatureRow(); saveConfig(); });
 el.styleCustom.addEventListener("change", saveConfig);
 
