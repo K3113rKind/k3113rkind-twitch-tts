@@ -94,3 +94,14 @@ def available_voices() -> list[dict]:
         if is_available(key)
     ]
     return local + (remote.REGISTRY.voices() if remote.REGISTRY else [])
+
+
+# Fester Satz für den Knopf "Hörprobe" – je nach Sprache der Stimme
+PREVIEW_TEXT = {
+    "d": "Hallo! Das ist eine Hörprobe. So klinge ich, wenn ich euren Chat vorlese.",
+    "en": "Hi there! This is a voice preview. This is how I sound when I read your chat.",
+}
+
+
+def preview_text(voice_key: str) -> str:
+    return PREVIEW_TEXT["d"] if lang_of(voice_key) == "d" else PREVIEW_TEXT["en"]

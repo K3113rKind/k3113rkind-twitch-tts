@@ -17,7 +17,7 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import DEFAULT_VOICE, available_voices, is_available
+from .voices import DEFAULT_VOICE, available_voices, is_available, preview_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -208,6 +208,33 @@ async def apply_voice():
     except Exception as exc:
         raise HTTPException(500, f"Stimme konnte nicht geladen werden: {exc}")
     speaker.skip()
+    return _status()
+
+
+preview_lock = asyncio.Lock()
+
+
+@app.post("/api/preview")
+async def preview():
+    """Hörprobe: fester Satz mit der eingestellten Stimme, ohne Twitch-Chat."""
+    if state["twitch"] is not None:
+        raise HTTPException(409, "Hörprobe geht nur, solange der Chat nicht vorgelesen wird.")
+    if preview_lock.locked():
+        raise HTTPException(409, "Hörprobe läuft bereits.")
+    async with preview_lock:
+        voice = config.get("voice")
+        if not is_available(voice):
+            raise HTTPException(400, "Diese Stimme ist gerade nicht verfügbar.")
+        try:
+            await _ensure_loaded(voice)
+            result = await asyncio.to_thread(
+                tts.synthesize, preview_text(voice), voice, config.get("speed"), False)
+        except Exception as exc:
+            raise HTTPException(500, f"Hörprobe fehlgeschlagen: {exc}")
+        await broadcaster.send({"type": "speak", "id": 0, "username": "Hörprobe",
+                                "text": preview_text(voice)})
+        await audio_stream.play(result.samples)
+        await broadcaster.send({"type": "done", "id": 0})
     return _status()
 
 

@@ -104,7 +104,8 @@ class TTS:
 
         self._ready = True
 
-    def synthesize(self, text: str, voice_key: str, speed: float = 1.0) -> SynthesisResult:
+    def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
+                   fallback: bool = True) -> SynthesisResult:
         if remote.is_remote(voice_key):
             try:
                 samples, sr = remote.REGISTRY.synthesize(text, voice_key, speed)
@@ -113,6 +114,8 @@ class TTS:
                     return SynthesisResult(samples, len(samples) / SAMPLE_RATE, SAMPLE_RATE)
                 raise RuntimeError("kein Audio erhalten")
             except Exception as exc:
+                if not fallback:
+                    raise
                 log.warning("Entfernte Stimme %s nicht nutzbar (%s) – nutze %s",
                             voice_key, exc, voices_mod.DEFAULT_VOICE)
                 voice_key = voices_mod.DEFAULT_VOICE

@@ -298,6 +298,8 @@ async function applyNow(button, endpoint) {
 
 el.applyChannel.addEventListener("click", () => applyNow(el.applyChannel, "/api/apply/channel"));
 el.applyVoice.addEventListener("click", () => applyNow(el.applyVoice, "/api/apply/voice"));
+const previewBtn = document.getElementById("preview-voice");
+previewBtn.addEventListener("click", () => applyNow(previewBtn, "/api/preview"));
 
 // Enter im Kanalfeld verhält sich wie der Wechseln-Knopf.
 el.channel.addEventListener("keydown", (ev) => {
