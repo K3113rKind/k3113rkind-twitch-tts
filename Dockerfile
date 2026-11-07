@@ -69,10 +69,14 @@ RUN case " $EXTRA_ENGINES " in *" chatterbox "*) \
 # Stimmtrennung für eigene Stimmen: BS-RoFormer über python-audio-separator
 # (MIT) in eigener venv – bringt eigene Torch-/ONNX-Versionen mit. Das Modell
 # lädt der erste Klon-Vorgang einmalig nach /hf/audio-separator.
-RUN python -m venv /opt/separator \
-    && /opt/separator/bin/pip install --no-cache-dir torch torchaudio --index-url "$CPU_TORCH_INDEX" \
+# diffq (Abhängigkeit) wird aus dem Quellcode gebaut -> gcc nur für diese
+# Schicht installieren und danach wieder entfernen.
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && python -m venv /opt/separator \
+    && /opt/separator/bin/pip install --no-cache-dir torch --index-url "$CPU_TORCH_INDEX" \
     && /opt/separator/bin/pip install --no-cache-dir "audio-separator[cpu]" --extra-index-url "$CPU_TORCH_INDEX" \
-    && /opt/separator/bin/python -c "from audio_separator.separator import Separator; print('audio-separator ok')"
+    && /opt/separator/bin/python -c "from audio_separator.separator import Separator; print('audio-separator ok')" \
+    && apt-get purge -y gcc libc6-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Eigene Kokoro-Stimmpakete suchen (app/kokoro_walk.py): Resemblyzer als
 # Stimm-Fingerabdruck. webrtcvad als fertiges Wheel (das Original müsste
