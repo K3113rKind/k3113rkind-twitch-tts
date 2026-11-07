@@ -52,19 +52,10 @@ RUN TORCH_BEFORE=$(python -c "import torch; print(torch.__version__)") \
     && python -c "import torch, sys; v=torch.__version__; print('Torch nach Pocket TTS:', v); sys.exit(v != '$TORCH_BEFORE')" \
     && python -c "import pocket_tts; print('pocket-tts', __import__('importlib.metadata').metadata.version('pocket-tts'))"
 
-# Chatterbox Multilingual (Resemble AI) – Test. Pinnt eigene Torch-/
-# Transformers-Versionen, die sich nicht mit Kokoro/Qwen/Pocket vertragen.
-# Deshalb eine eigene venv, die App spricht sie über app/ext_worker.py als
-# Rechenprozess an. Immer CPU-Torch. Abschalten: --build-arg EXTRA_ENGINES=""
-# (NeuTTS war hier ebenfalls eingebaut und wurde im Nov 2026 wieder entfernt:
-# schlechter Klang, eigene Stimmen brachen nach dem ersten Wort ab, RTF >2.)
-ARG EXTRA_ENGINES="chatterbox"
+# Zusätzliche Test-Engines in eigener venv (NeuTTS, Chatterbox, VoxCPM2,
+# OmniVoice) wurden im Nov 2026 wieder entfernt. CPU-Torch-Index für die
+# Separator-venv:
 ARG CPU_TORCH_INDEX=https://download.pytorch.org/whl/cpu
-RUN case " $EXTRA_ENGINES " in *" chatterbox "*) \
-      python -m venv /opt/chatterbox \
-      && /opt/chatterbox/bin/pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 --index-url "$CPU_TORCH_INDEX" \
-      && /opt/chatterbox/bin/pip install --no-cache-dir chatterbox-tts --extra-index-url "$CPU_TORCH_INDEX" \
-      && /opt/chatterbox/bin/python -c "import torch; from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('chatterbox ok, torch', torch.__version__)" ;; esac
 
 # Stimmtrennung für eigene Stimmen: BS-RoFormer über python-audio-separator
 # (MIT) in eigener venv – bringt eigene Torch-/ONNX-Versionen mit. Das Modell

@@ -138,21 +138,13 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
             "group": _name,
         }
 
-# --- Chatterbox (Test) -------------------------------------------------------
-# Läuft in einer eigenen Python-Umgebung (/opt/chatterbox) über
-# app/ext_pool.py – deren Abhängigkeiten vertragen sich nicht mit dem Rest.
-# (NeuTTS war ebenfalls eingebunden, wurde im Nov 2026 entfernt.)
-CHATTERBOX_ENGINE = "chatterbox"
-EXT_PYTHON = {
-    CHATTERBOX_ENGINE: os.environ.get("CHATTERBOX_PYTHON", "/opt/chatterbox/bin/python"),
-}
+# --- Engines in eigener Python-Umgebung (app/ext_pool.py, app/ext_worker.py) --
+# Derzeit keine. Getestet und im Nov 2026 wieder entfernt: NeuTTS (Klang,
+# Abbrüche), Chatterbox, VoxCPM2 und OmniVoice (auf der CPU zu langsam).
+# Die Anbindung bleibt für spätere Tests: Eintrag hier + Klasse in ext_worker.py
+# + venv im Dockerfile.
+EXT_PYTHON: dict[str, str] = {}
 EXT_ENGINES = tuple(EXT_PYTHON)
-VOICES["chatterbox-standard"] = {
-    "label": "Chatterbox · Standardstimme – Deutsch (Test, langsam)",
-    "engine": CHATTERBOX_ENGINE,
-    "lang": "d",
-    "group": "Chatterbox",
-}
 
 # Eigene Kokoro-Stimmpakete (app/kokoro_walk.py): /ref/kokoro/NAME.pt, laufen
 # auf dem deutschen Victoria-Backbone. Werden während der Suche laufend
@@ -290,14 +282,6 @@ def sync_clone_voices() -> None:
                     "lang": "d",
                     "group": "Eigene Stimmen",
                 }
-            wanted[f"klon-chatterbox-{wav.stem}"] = {
-                "label": f"{wav.stem} · Chatterbox – Deutsch (Test, langsam)",
-                "engine": CHATTERBOX_ENGINE,
-                "ref_wav": str(wav),
-                "lang": "d",
-                "group": "Eigene Stimmen",
-                "custom_ext": True,
-            }
         for pack in sorted((folder / "kokoro").glob("*.pt")):
             wanted[f"klon-kokoro-{pack.stem}"] = {
                 "label": f"{pack.stem} · Kokoro – Deutsch (Test)",
@@ -398,7 +382,7 @@ def is_pocket(voice_key: str) -> bool:
 
 
 def is_ext(voice_key: str) -> bool:
-    """Chatterbox (eigene Python-Umgebung)?"""
+    """Engine in eigener Python-Umgebung (derzeit keine)?"""
     return engine(voice_key) in EXT_ENGINES
 
 
