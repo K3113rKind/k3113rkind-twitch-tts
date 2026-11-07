@@ -19,7 +19,8 @@ beendet und der Prozess neu gestartet.
 Einschalten: in der Oberfläche unter "Rechenprozesse" (je Engine 1–6) oder
 als Startwert QWEN_WORKERS=4 (Standard 1 = aus, alles im Hauptprozess).
 Speicher: je Prozess ca. 3 GB (0.6B) bzw. 7–8 GB (1.7B). Große Modelle
-laufen deshalb nur auf QWEN_WORKERS_BIG Prozessen (Standard 2).
+laufen deshalb nur auf QWEN_WORKERS_BIG Prozessen (Standard: automatisch
+nach Arbeitsspeicher, ~8 GB je Prozess).
 
 Dieselbe Mechanik gibt es auch für Pocket TTS (engine="pocket"): Ein
 Prozess rechnet dort mit POCKET_THREADS Threads, mehrere Prozesse rechnen
@@ -39,7 +40,32 @@ from concurrent.futures import Future
 log = logging.getLogger(__name__)
 
 QWEN_WORKERS = int(os.environ.get("QWEN_WORKERS", "1") or 1)
-QWEN_WORKERS_BIG = int(os.environ.get("QWEN_WORKERS_BIG", "2") or 2)
+def _mem_total_gb() -> float:
+    """Arbeitsspeicher, den der Container sieht (im LXC: dessen Grenze)."""
+    try:
+        limit = open("/sys/fs/cgroup/memory.max").read().strip()
+        if limit.isdigit():
+            return int(limit) / 2**30
+    except OSError:
+        pass
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) / 2**20
+    except OSError:
+        pass
+    return 0.0
+
+
+def _big_workers_default() -> int:
+    """Wie viele Prozesse dürfen 1.7B laden? ~8 GB je Prozess, ~6 GB Reserve
+    für App, Kokoro & Co. 24 GB -> 2, 32 GB -> 3, 64 GB -> 7."""
+    gb = _mem_total_gb()
+    return max(1, int((gb - 6) // 8)) if gb else 2
+
+
+# Leer/0 = automatisch nach Arbeitsspeicher
+QWEN_WORKERS_BIG = int(os.environ.get("QWEN_WORKERS_BIG", "0") or 0) or _big_workers_default()
 
 
 def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
@@ -154,8 +180,9 @@ class QwenPool:
                 self._spawn(i)
             self._started = True
         threading.Thread(target=self._reader, name=f"{self.engine}-pool-reader", daemon=True).start()
-        log.info("%s: %d Rechenprozesse gestartet (zusammen %d Threads)",
-                 self.engine, self.workers, self.total_threads)
+        log.info("%s: %d Rechenprozesse gestartet (zusammen %d Threads, 1.7B auf bis zu %d, RAM %.0f GB)",
+                 self.engine, self.workers, self.total_threads,
+                 min(self.workers, QWEN_WORKERS_BIG), _mem_total_gb())
 
     def shutdown(self) -> None:
         """Alle Prozesse beenden (z. B. vor dem Umstellen der Anzahl). Laufende

@@ -24,9 +24,9 @@ services:
       # Qwen-Leistung (siehe app/tts.py): Torch-Threads, 0 = alle sichtbaren Kerne
       - QWEN_THREADS=${QWEN_THREADS:-0}
       # Qwen auf der CPU: so viele parallele Rechenprozesse (1 = aus).
-      # Je Prozess ca. 3 GB RAM (0.6B); 1.7B nur auf QWEN_WORKERS_BIG Prozessen.
+      # Je Prozess ca. 3 GB RAM (0.6B); 1.7B nur auf QWEN_WORKERS_BIG Prozessen (0 = automatisch nach RAM, ~8 GB je Prozess).
       - QWEN_WORKERS=${QWEN_WORKERS:-1}
-      - QWEN_WORKERS_BIG=${QWEN_WORKERS_BIG:-2}
+      - QWEN_WORKERS_BIG=${QWEN_WORKERS_BIG:-0}
       # Füllzeichen hinter dem Satzende gegen verschluckte letzte Laute (1 = an)
       - QWEN_END_FIX=${QWEN_END_FIX:-0}
       # Eigene Stimmen schneller, aber ungenauer (nur Stimm-Fingerabdruck, 1 = an)
