@@ -41,6 +41,7 @@ services:
       - POCKET_TEMP=${POCKET_TEMP:-}
       - POCKET_EOS=${POCKET_EOS:-}
       - POCKET_CONTINUE=${POCKET_CONTINUE:-0}
+      - POCKET_PROMPT_MAX_S=${POCKET_PROMPT_MAX_S:-15}
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen ("gated" – Bedingungen
       # auf der Modellseite akzeptieren)
       - HF_TOKEN=${HF_TOKEN:-}

@@ -41,12 +41,15 @@ def _env_float(name: str) -> float | None:
 #   POCKET_CONTINUE  1 = interne Teilstücke eines Texts setzen das vorige fort
 #                    (teacher_force_previous_chunk) statt neu von der Vorlage –
 #                    gleichmäßigere Stimme bei längeren Texten, etwas langsamer
+# Längste eigene Vorlage für Pocket (s). Mit 25 s kam Kauderwelsch, 12 s lief
+# sauber – längere Vorlagen werden an einer Sprechpause davor gekürzt.
+POCKET_PROMPT_MAX_S = float(os.environ.get("POCKET_PROMPT_MAX_S", "15") or 15)
 POCKET_STEPS = int(os.environ.get("POCKET_STEPS", "1") or 1)
 POCKET_TEMP = _env_float("POCKET_TEMP")
 POCKET_EOS = _env_float("POCKET_EOS")
 POCKET_CONTINUE = os.environ.get("POCKET_CONTINUE", "0").strip().lower() in ("1", "true", "yes")
 # fließt in den Zwischenspeicher-Schlüssel: geänderte Einstellung -> neu rechnen
-POCKET_PARAMS = (POCKET_STEPS, POCKET_TEMP, POCKET_EOS, POCKET_CONTINUE)
+POCKET_PARAMS = (POCKET_STEPS, POCKET_TEMP, POCKET_EOS, POCKET_CONTINUE, POCKET_PROMPT_MAX_S)
 
 CLONE_HINT = (
     "Eigene Stimmen mit Pocket TTS brauchen das Modell mit Stimmklonen: auf "
@@ -111,7 +114,7 @@ def _supports_continue(model) -> bool:
 
 def _prompt_file(ref_wav: str) -> str:
     """Eigene Vorlage für Pocket aufbereiten wie im Kyutai-Training: höchstens
-    30 s, endet auf genau 80 ms Stille (Stille am Ende weg, 20 ms ausblenden,
+    POCKET_PROMPT_MAX_S (an einer Pause gekürzt), endet auf genau 80 ms Stille (Stille am Ende weg, 20 ms ausblenden,
     80 ms Null anhängen). Endet die Vorlage mitten im Sprechen oder auf langer
     Stille, setzt das Modell sonst die Vorlage fort -> Wortfetzen/Kauderwelsch
     (pocket_tts/data/audio_utils.py: end_on_pause, erst nach 4.0.1 eingebaut).
@@ -122,17 +125,27 @@ def _prompt_file(ref_wav: str) -> str:
 
         src = Path(ref_wav)
         out = Path(os.environ.get("POCKET_PROMPT_DIR", "/tmp/pocket-prompts"))
-        dst = out / f"{src.stem}-{int(src.stat().st_mtime)}.wav"
+        dst = out / f"{src.stem}-{int(src.stat().st_mtime)}-{POCKET_PROMPT_MAX_S:g}.wav"
         if dst.is_file():
             return str(dst)
         audio, sr = sf.read(src, dtype="float32", always_2d=True)
-        wav = audio.mean(axis=1)[: int(30 * sr)]
+        wav = audio.mean(axis=1)
         frame = max(1, int(0.02 * sr))
         n = len(wav) // frame
         if n == 0:
             return ref_wav
         rms = np.sqrt(np.mean(wav[: n * frame].reshape(n, frame) ** 2, axis=1))
         db = 20 * np.log10(rms + 1e-12)
+        quiet = db <= db.max() - 35.0
+        limit = int(POCKET_PROMPT_MAX_S * sr / frame)
+        if n > limit:
+            # zu lang: an der letzten Sprechpause (>= 60 ms) vor der Grenze schneiden
+            cut = limit
+            for i in range(limit - 1, 2, -1):
+                if quiet[i] and quiet[i - 1] and quiet[i - 2]:
+                    cut = i - 2
+                    break
+            wav, db = wav[: cut * frame], db[:cut]
         loud = np.nonzero(db > db.max() - 35.0)[0]
         end = (int(loud[-1]) + 1) * frame
         wav = wav[:end].copy()
