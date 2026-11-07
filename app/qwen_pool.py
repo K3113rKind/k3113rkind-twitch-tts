@@ -42,6 +42,9 @@ from concurrent.futures import Future
 # früher), sonst nach Eingang. Der Player setzt (Eingang der Nachricht,
 # Abschnittsnummer) – so rechnet ein frei werdender Prozess immer den als
 # Nächstes benötigten Satz. asyncio.to_thread übernimmt den Wert in den Thread.
+# Sammelfenster vor der Vergabe eines freien Prozesses (siehe submit)
+SUBMIT_GRACE_S = 0.05
+
 PRIORITY: contextvars.ContextVar = contextvars.ContextVar("tts_priority", default=None)
 
 
@@ -302,6 +305,13 @@ class QwenPool:
             me = ((prio if prio is not None else (time.monotonic(), 0)), self._ticket, frozenset(allowed))
             self._waiting.append(me)
             try:
+                # Kurz sammeln, bevor vergeben wird: Kommen viele Aufträge
+                # gleichzeitig (alle Abschnitte eines Textes), schnappte sich
+                # sonst der zufällig schnellste Thread den freien Prozess –
+                # Abschnitt 9 rechnete vor Abschnitt 1, die Wiedergabe wartete.
+                deadline = time.monotonic() + SUBMIT_GRACE_S
+                while (left := deadline - time.monotonic()) > 0 and not self._closed:
+                    self._cond.wait(left)
                 # Feste Reihenfolge: dran ist der wartende Auftrag mit der
                 # kleinsten Priorität, für den gerade ein passender Prozess frei ist
                 while True:
