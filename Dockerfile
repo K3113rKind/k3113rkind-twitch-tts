@@ -66,6 +66,14 @@ RUN case " $EXTRA_ENGINES " in *" chatterbox "*) \
       && /opt/chatterbox/bin/pip install --no-cache-dir chatterbox-tts --extra-index-url "$CPU_TORCH_INDEX" \
       && /opt/chatterbox/bin/python -c "import torch; from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('chatterbox ok, torch', torch.__version__)" ;; esac
 
+# Stimmtrennung für eigene Stimmen: BS-RoFormer über python-audio-separator
+# (MIT) in eigener venv – bringt eigene Torch-/ONNX-Versionen mit. Das Modell
+# lädt der erste Klon-Vorgang einmalig nach /hf/audio-separator.
+RUN python -m venv /opt/separator \
+    && /opt/separator/bin/pip install --no-cache-dir torch torchaudio --index-url "$CPU_TORCH_INDEX" \
+    && /opt/separator/bin/pip install --no-cache-dir "audio-separator[cpu]" --extra-index-url "$CPU_TORCH_INDEX" \
+    && /opt/separator/bin/python -c "from audio_separator.separator import Separator; print('audio-separator ok')"
+
 # Eigene Kokoro-Stimmpakete suchen (app/kokoro_walk.py): Resemblyzer als
 # Stimm-Fingerabdruck. webrtcvad als fertiges Wheel (das Original müsste
 # kompiliert werden), resemblyzer deshalb ohne Abhängigkeiten.

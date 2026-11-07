@@ -5,7 +5,7 @@ Weboberfläche: Speicher von Demucs/Whisper ist danach sofort wieder frei, und
 ein Absturz trifft nicht die App. Ablauf:
 
   1. Ton holen: YouTube-/Twitch-Link per yt-dlp (mit Deno), oder Datei
-  2. Stimme von Musik trennen (Demucs htdemucs, auf der CPU)
+  2. Stimme von Musik trennen (BS-RoFormer, Rückfall Demucs htdemucs; CPU)
   3. Mit Wort-Zeitstempeln abschreiben (faster-whisper, CPU)
   4. Besten Abschnitt der gewünschten Länge wählen (Satzgrenzen, keine langen
      Pausen, sicher erkannte Wörter)
@@ -62,18 +62,40 @@ def to_wav(src: Path, dst: Path, rate: int, channels: int) -> None:
 
 
 # ------------------------------------------------------------ 2. Trennen
+SEPARATOR_PYTHON = os.environ.get("SEPARATOR_PYTHON", "/opt/separator/bin/python")
+SEPARATOR_MODELS = os.environ.get("SEPARATOR_MODELS", "/hf/audio-separator")
+
+
 def separate(source: Path, work: Path) -> Path:
+    """Stimme freistellen. Bevorzugt BS-RoFormer (eigene venv, siehe
+    app/separate_worker.py), Rückfall auf Demucs htdemucs, falls die venv
+    fehlt oder das Modell nicht geladen werden kann."""
+    stereo = work / "stereo.wav"
+    to_wav(source, stereo, 44100, 2)
+    vocals = work / "stimme_stereo.wav"
+    if Path(SEPARATOR_PYTHON).is_file():
+        step("Stimme von Musik trennen (BS-RoFormer, beim ersten Mal Modell-Download) …")
+        os.makedirs(SEPARATOR_MODELS, exist_ok=True)
+        worker = Path(__file__).with_name("separate_worker.py")
+        res = subprocess.run([SEPARATOR_PYTHON, str(worker), str(stereo), str(vocals),
+                              SEPARATOR_MODELS], capture_output=True, text=True)
+        if res.returncode == 0 and vocals.is_file():
+            out = work / "stimme_komplett.wav"
+            to_wav(vocals, out, 24000, 1)
+            return out
+        print("BS-RoFormer fehlgeschlagen, nehme Demucs:", res.stderr.strip()[-600:], flush=True)
+    return separate_demucs(stereo, work)
+
+
+def separate_demucs(stereo: Path, work: Path) -> Path:
     """Demucs über die Python-API; Ein-/Ausgabe per ffmpeg/soundfile statt
     torchaudio (dessen Speicherfunktionen wurden in neuen Versionen umgebaut)."""
     step("Stimme von Musik trennen (Demucs) …")
-    import numpy as np
     import soundfile as sf
     import torch
     from demucs.apply import apply_model
     from demucs.pretrained import get_model
 
-    stereo = work / "stereo.wav"
-    to_wav(source, stereo, 44100, 2)
     audio, _ = sf.read(stereo, dtype="float32", always_2d=True)
     wav = torch.from_numpy(audio.T.copy())
     ref = wav.mean(0)
