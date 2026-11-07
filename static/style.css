@@ -259,3 +259,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 0.3rem 0.8rem; background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; color: var(--text); cursor: pointer; white-space: nowrap;
 }
+
+/* Stimmen verwalten */
+.btn-link { background: none; border: 0; color: var(--accent); padding: 0.2rem 0; cursor: pointer; font: inherit; text-align: left; }
+.btn-link:hover { text-decoration: underline; }
+.voice-manager { margin-top: 0.5rem; padding: 0.7rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+.voice-manager input[type=search] { width: 100%; margin-bottom: 0.4rem; }
+.voice-manager details { border-top: 1px solid var(--line); padding: 0.3rem 0; }
+.voice-manager summary { cursor: pointer; font-weight: 600; padding: 0.2rem 0; }
+.voice-manager summary .muted { font-weight: 400; }
+.voice-manager label.vm-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0 0.15rem 0.6rem; font-weight: 400; margin: 0; }
+.voice-manager label.vm-item input { width: auto; margin: 0; }
+.voice-manager .vm-state { color: var(--muted); font-size: 0.85em; }
+.voice-manager .vm-state.err { color: var(--err); }

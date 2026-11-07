@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 
 # Reihenfolge = Reihenfolge im Dropdown.
+# "group" = Abschnitt in "Stimmen verwalten"; "default": False = Katalogstimme,
+# die erst nach dem Aktivieren in der Auswahl erscheint.
 VOICES: dict[str, dict] = {
     "victoria": {
         "label": "Victoria – Deutsch, weiblich",
@@ -54,20 +56,30 @@ QWEN_MODELS = {
     "0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
     "1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
 }
+# Alle Preset-Sprecher der CustomVoice-Modelle (Name, Geschlecht, Muttersprache,
+# standardmäßig sichtbar). Sie sprechen alle Deutsch, ggf. mit Akzent.
 QWEN_SPEAKERS = [
-    ("serena", "Serena", "weiblich"),
-    ("vivian", "Vivian", "weiblich"),
-    ("ryan", "Ryan", "männlich"),
-    ("aiden", "Aiden", "männlich"),
+    ("serena", "Serena", "weiblich", "Chinesisch", True),
+    ("vivian", "Vivian", "weiblich", "Chinesisch", True),
+    ("ryan", "Ryan", "männlich", "Englisch", True),
+    ("aiden", "Aiden", "männlich", "Englisch", True),
+    ("ono_anna", "Ono_Anna", "weiblich", "Japanisch", False),
+    ("sohee", "Sohee", "weiblich", "Koreanisch", False),
+    ("uncle_fu", "Uncle_Fu", "männlich", "Chinesisch", False),
+    ("dylan", "Dylan", "männlich", "Chinesisch (Peking)", False),
+    ("eric", "Eric", "männlich", "Chinesisch (Sichuan)", False),
 ]
 for _size, _repo in QWEN_MODELS.items():
-    for _key, _name, _gender in QWEN_SPEAKERS:
+    for _key, _name, _gender, _native, _default in QWEN_SPEAKERS:
         VOICES[f"qwen-{_size}-{_key}"] = {
-            "label": f"Qwen {_size.upper()} · {_name} – Deutsch, {_gender} (Test, langsam)",
+            "label": f"Qwen {_size.upper()} · {_name.replace('_', ' ')} – Deutsch, {_gender}"
+                     + ("" if _default else f" (Vorlage {_native})") + " (Test, langsam)",
             "engine": "qwen",
             "model": _repo,
             "speaker": _name,
             "lang": "d",  # für "sagt"/"says" bei der Namensansage
+            "group": f"Qwen {_size.upper()}",
+            "default": _default,
         }
 
 # --- Eigene Stimmen (Qwen-Stimmklonen, Test) ---------------------------------
@@ -114,6 +126,7 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
         "language": _lang,
         "voice": "juergen",
         "lang": "d",
+        "group": _name,
     }
     for _vkey, _vname, _origin in POCKET_FEMALE:
         VOICES[f"{_key}-{_vkey}"] = {
@@ -122,12 +135,104 @@ for _key, (_lang, _name) in POCKET_MODELS.items():
             "language": _lang,
             "voice": f"audio:{_vkey}",
             "lang": "d",
+            "group": _name,
         }
 
 # Eigene Kokoro-Stimmpakete (app/kokoro_walk.py): /ref/kokoro/NAME.pt, laufen
 # auf dem deutschen Victoria-Backbone. Werden während der Suche laufend
 # verbessert – die Datei wird dabei ersetzt.
 KOKORO_CUSTOM_BACKBONE = "kikiri_german_victoria_ep10"
+
+# --- Kokoro: englische Originalstimmen (Katalog) ------------------------------
+# Laufen auf dem offiziellen Kokoro-82M (wie Heart/Michael). Das Stimmpaket wird
+# beim Aktivieren einmalig aus hexgrad/Kokoro-82M in den HF-Cache (/hf) geladen,
+# weil /models schreibgeschützt eingebunden ist.
+KOKORO_STOCK_REPO = "hexgrad/Kokoro-82M"
+KOKORO_STOCK = {
+    "a": ("Englisch (US)", {
+        "f": ["alloy", "aoede", "bella", "jessica", "kore", "nicole", "nova", "river", "sarah", "sky"],
+        "m": ["adam", "echo", "eric", "fenrir", "liam", "onyx", "puck", "santa"],
+    }),
+    "b": ("Englisch (UK)", {
+        "f": ["alice", "emma", "isabella", "lily"],
+        "m": ["daniel", "fable", "george", "lewis"],
+    }),
+}
+for _key in ("victoria", "martin", "heart", "michael"):
+    VOICES[_key]["group"] = "Kokoro"
+for _lang, (_lname, _by_gender) in KOKORO_STOCK.items():
+    for _g, _names in _by_gender.items():
+        for _n in _names:
+            VOICES[f"kokoro-{_lang}{_g}_{_n}"] = {
+                "label": f"{_n.capitalize()} – {_lname}, {'weiblich' if _g == 'f' else 'männlich'}",
+                "backbone": "kokoro-v1_0",
+                "voicepack": f"{_lang}{_g}_{_n}",
+                "hf_voicepack": True,
+                "lang": _lang,
+                "group": "Kokoro",
+                "default": False,
+            }
+
+
+def kokoro_stock_path(pack: str) -> Path | None:
+    """Heruntergeladenes Original-Stimmpaket im HF-Cache, falls vorhanden."""
+    hub = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    snaps = hub / f"models--{KOKORO_STOCK_REPO.replace('/', '--')}" / "snapshots"
+    if snaps.is_dir():
+        for snap in sorted(snaps.iterdir(), reverse=True):
+            f = snap / "voices" / f"{pack}.pt"
+            if f.is_file():
+                return f
+    return None
+
+
+def needs_download(voice_key: str) -> bool:
+    spec = VOICES.get(voice_key, {})
+    return bool(spec.get("hf_voicepack")) and kokoro_stock_path(spec["voicepack"]) is None
+
+
+# --- Pocket: weitere Katalogstimmen von Kyutai --------------------------------
+# Die vollständige Liste kennt erst das installierte Paket pocket-tts. Sie wird
+# beim ersten Bedarf eingelesen; alles außer den Standardstimmen ist versteckt.
+_pocket_catalog_done = False
+
+
+def ensure_pocket_catalog() -> None:
+    global _pocket_catalog_done
+    if _pocket_catalog_done or importlib.util.find_spec("pocket_tts") is None:
+        return
+    _pocket_catalog_done = True
+    try:
+        import torch
+
+        before = torch.get_num_threads()
+        from pocket_tts.utils.utils import _ORIGINS_OF_PREDEFINED_VOICES
+
+        torch.set_num_threads(before)  # pocket_tts setzt beim Import 1 Thread
+    except Exception:
+        return
+    for name in sorted(_ORIGINS_OF_PREDEFINED_VOICES):
+        for key, (lang, model_name) in POCKET_MODELS.items():
+            vkey = f"{key}-{name}"
+            if vkey in VOICES or name == "juergen":
+                continue
+            VOICES[vkey] = {
+                "label": f"{model_name} · {name.replace('_', ' ').title()} – Deutsch (Katalogstimme, Test)",
+                "engine": POCKET_ENGINE,
+                "language": lang,
+                "voice": f"audio:{name}",
+                "lang": "d",
+                "group": model_name,
+                "default": False,
+            }
+
+
+def is_visible(voice_key: str, visibility: dict | None = None) -> bool:
+    """Sichtbar in der Stimmauswahl? Eigene Einstellung vor Standardwert."""
+    if visibility and voice_key in visibility:
+        return bool(visibility[voice_key])
+    return bool(VOICES.get(voice_key, {}).get("default", True))
+
 
 # Schlüssel-Präfixe einer eigenen Stimme NAME: klon-<präfix>-NAME
 CLONE_PREFIXES = [*QWEN_BASE_MODELS, *POCKET_MODELS, "kokoro"]
@@ -158,6 +263,7 @@ def sync_clone_voices() -> None:
                     "ref_wav": str(wav),
                     "ref_txt": str(txt),
                     "lang": "d",
+                    "group": "Eigene Stimmen",
                 }
             for key, (lang, model_name) in POCKET_MODELS.items():
                 wanted[f"klon-{key}-{wav.stem}"] = {
@@ -166,6 +272,7 @@ def sync_clone_voices() -> None:
                     "language": lang,
                     "ref_wav": str(wav),
                     "lang": "d",
+                    "group": "Eigene Stimmen",
                 }
         for pack in sorted((folder / "kokoro").glob("*.pt")):
             wanted[f"klon-kokoro-{pack.stem}"] = {
@@ -174,6 +281,7 @@ def sync_clone_voices() -> None:
                 "voicepack_file": str(pack),
                 "custom_kokoro": True,
                 "lang": "d",
+                "group": "Eigene Stimmen",
             }
     for key in [k for k, v in list(VOICES.items())
                 if v.get("engine") in (CLONE_ENGINE, POCKET_CLONE_ENGINE) or v.get("custom_kokoro")]:
@@ -231,6 +339,8 @@ def voicepack_path(voice_key: str) -> Path:
     spec = VOICES[voice_key]
     if spec.get("voicepack_file"):
         return Path(spec["voicepack_file"])
+    if spec.get("hf_voicepack"):
+        return kokoro_stock_path(spec["voicepack"]) or Path("/nonexistent") / f"{spec['voicepack']}.pt"
     return models_dir() / "voices" / f"{spec['voicepack']}.pt"
 
 
@@ -299,13 +409,36 @@ def display_name(voice_key: str, custom: dict | None = None) -> str:
     return VOICES[voice_key]["label"]
 
 
-def available_voices(custom: dict | None = None) -> list[dict]:
-    """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
+def available_voices(custom: dict | None = None, visibility: dict | None = None) -> list[dict]:
+    """Nur sichtbare Stimmen, deren Dateien tatsächlich da sind (für das Dropdown)."""
     sync_clone_voices()
+    ensure_pocket_catalog()
     return [
         {"key": key, "label": display_name(key, custom), "default_label": data["label"],
          "qwen": is_qwen(key), "styleable": data.get("engine") == "qwen",
-         "pocket": is_pocket(key)}
+         "pocket": is_pocket(key), "custom": data.get("group") == "Eigene Stimmen"}
         for key, data in list(VOICES.items())
-        if is_available(key)
+        if is_visible(key, visibility) and is_available(key)
     ]
+
+
+def voice_catalog(custom: dict | None = None, visibility: dict | None = None) -> list[dict]:
+    """Alle bekannten Stimmen nach Modell gruppiert (für "Stimmen verwalten").
+    Kokoro-Katalogstimmen gelten als nutzbar, sobald das Backbone da ist – das
+    Stimmpaket wird beim Aktivieren nachgeladen."""
+    sync_clone_voices()
+    ensure_pocket_catalog()
+    groups: dict[str, list[dict]] = {}
+    for key, data in list(VOICES.items()):
+        if data.get("hf_voicepack"):
+            usable = backbone_path(key).is_file() and config_path().is_file()
+        else:
+            usable = is_available(key)
+        if not usable:
+            continue
+        groups.setdefault(data.get("group", "Sonstige"), []).append({
+            "key": key, "label": display_name(key, custom),
+            "visible": is_visible(key, visibility),
+            "download": needs_download(key),
+        })
+    return [{"group": g, "voices": v} for g, v in groups.items()]

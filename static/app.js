@@ -14,6 +14,8 @@ const el = {
   blocklist: $("bot_blocklist"),
   skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
+  hideVoice: $("hide-voice"), manageVoices: $("manage-voices"), voiceManager: $("voice-manager"),
+  voiceFilter: $("voice-filter"), voiceGroups: $("voice-groups"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
@@ -192,6 +194,7 @@ function connectWs() {
       case "voices_changed":
         refreshStatus();
         loadCloneList();
+        if (!el.voiceManager.classList.contains("hidden")) loadVoiceCatalog();
         break;
       case "error":
         stopGenerating();
@@ -662,3 +665,87 @@ async function loadCloneList() {
   }
 }
 loadCloneList();
+
+// ------------------------------------------------------ Stimmen verwalten
+async function setVisibility(changes) {
+  const res = await fetch("/api/voices/visibility", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+  if (!res.ok) { showError("Ändern der Stimmenliste fehlgeschlagen."); return; }
+  const data = await res.json();
+  el.voice.dataset.selected = data.voice;
+  // Dropdown + Liste aktualisiert die voices_changed-Nachricht
+}
+
+el.hideVoice.addEventListener("click", () => {
+  const opt = el.voice.selectedOptions[0];
+  if (!opt) return;
+  if (el.voice.options.length <= 1) { showError("Die letzte Stimme lässt sich nicht entfernen."); return; }
+  if (!window.confirm(`„${opt.textContent}“ aus der Liste entfernen?\n\nÜber „Stimmen verwalten …“ jederzeit wieder einblendbar.`)) return;
+  setVisibility({ [opt.value]: false });
+});
+
+el.manageVoices.addEventListener("click", () => {
+  const show = el.voiceManager.classList.toggle("hidden") === false;
+  el.manageVoices.textContent = show ? "Stimmen verwalten schließen" : "Stimmen verwalten …";
+  if (show) loadVoiceCatalog();
+});
+
+const openGroups = new Set();
+async function loadVoiceCatalog() {
+  const groups = await fetch("/api/voices/catalog").then((r) => r.json()).catch(() => null);
+  if (!groups) return;
+  el.voiceGroups.innerHTML = "";
+  for (const g of groups) {
+    const det = document.createElement("details");
+    det.open = openGroups.has(g.group);
+    det.addEventListener("toggle", () => { det.open ? openGroups.add(g.group) : openGroups.delete(g.group); });
+    const sum = document.createElement("summary");
+    const active = g.voices.filter((v) => v.visible).length;
+    sum.textContent = g.group + " ";
+    const cnt = document.createElement("span");
+    cnt.className = "muted";
+    cnt.textContent = `(${active} von ${g.voices.length} aktiv)`;
+    sum.append(cnt);
+    det.append(sum);
+    for (const v of g.voices) {
+      const lab = document.createElement("label");
+      lab.className = "vm-item";
+      lab.dataset.search = `${g.group} ${v.label}`.toLowerCase();
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = v.visible;
+      cb.addEventListener("change", () => setVisibility({ [v.key]: cb.checked }));
+      const txt = document.createElement("span");
+      txt.textContent = v.label;
+      lab.append(cb, txt);
+      const state = v.download_state || (v.visible && v.download ? "wird geladen …" : v.download ? "wird beim Aktivieren geladen" : "");
+      if (state) {
+        const st = document.createElement("span");
+        st.className = "vm-state" + (state.startsWith("Download fehl") ? " err" : "");
+        st.textContent = state === "läuft" ? "wird geladen …" : state;
+        lab.append(st);
+      }
+      det.append(lab);
+    }
+    el.voiceGroups.append(det);
+  }
+  applyVoiceFilter();
+}
+
+function applyVoiceFilter() {
+  const words = el.voiceFilter.value.toLowerCase().split(/\s+/).filter(Boolean);
+  for (const det of el.voiceGroups.querySelectorAll("details")) {
+    let hits = 0;
+    for (const lab of det.querySelectorAll("label.vm-item")) {
+      const ok = words.every((w) => lab.dataset.search.includes(w));
+      lab.classList.toggle("hidden", !ok);
+      if (ok) hits++;
+    }
+    det.classList.toggle("hidden", hits === 0);
+    if (words.length) det.open = hits > 0;
+  }
+}
+el.voiceFilter.addEventListener("input", applyVoiceFilter);

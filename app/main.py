@@ -24,8 +24,9 @@ from .player import Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import (DEFAULT_VOICE, available_voices, clone_keys, is_available, is_qwen,
-                     ref_dir, sync_clone_voices)
+from .voices import (DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
+                     is_available, is_qwen, needs_download, ref_dir, sync_clone_voices,
+                     voice_catalog)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -96,7 +97,7 @@ def _status() -> dict:
         "loading": state["loading"],
         "warming": tts.warming,
         "error": state["error"],
-        "voices": available_voices(config.get("voice_labels")),
+        "voices": available_voices(config.get("voice_labels"), config.get("voice_visibility")),
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
@@ -399,6 +400,9 @@ async def clone_delete(name: str):
     labels = dict(config.get("voice_labels") or {})
     if any(k in labels for k in keys):
         changes["voice_labels"] = {k: v for k, v in labels.items() if k not in keys}
+    vis = dict(config.get("voice_visibility") or {})
+    if any(k in vis for k in keys):
+        changes["voice_visibility"] = {k: v for k, v in vis.items() if k not in keys}
     if changes:
         config.update(changes)
     for suffix in (".wav", ".txt"):
@@ -407,6 +411,69 @@ async def clone_delete(name: str):
     sync_clone_voices()
     tts.forget_clone(name)
     log.info("Eigene Stimme %s gelöscht", name)
+    await broadcaster.send({"type": "voices_changed"})
+    return {"ok": True, "voice": config.get("voice")}
+
+
+# ------------------------------------------------- Stimmen verwalten
+downloads: dict[str, str] = {}  # Stimmen-Schlüssel -> "läuft" / Fehlertext
+
+
+@app.get("/api/voices/catalog")
+async def voices_catalog():
+    groups = await asyncio.to_thread(voice_catalog, config.get("voice_labels"),
+                                     config.get("voice_visibility"))
+    for g in groups:
+        for v in g["voices"]:
+            if v["key"] in downloads:
+                v["download_state"] = downloads[v["key"]]
+    return groups
+
+
+async def _download_voicepack(key: str) -> None:
+    """Kokoro-Original-Stimmpaket einmalig in den HF-Cache laden (eigener
+    Prozess mit Internetzugang, der Container läuft sonst offline)."""
+    pack = VOICES[key]["voicepack"]
+    downloads[key] = "läuft"
+    code = ("import sys; from huggingface_hub import hf_hub_download; "
+            "print(hf_hub_download(sys.argv[1], f'voices/{sys.argv[2]}.pt'))")
+    env = {**os.environ, "HF_HUB_OFFLINE": "0"}
+    env.pop("HF_TOKEN", None)  # öffentliches Repo
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code, KOKORO_STOCK_REPO, pack,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=300)
+        if proc.returncode != 0:
+            raise RuntimeError(err.decode(errors="replace").strip()[-300:])
+        downloads.pop(key, None)
+        log.info("Stimmpaket %s geladen: %s", pack, out.decode().strip().splitlines()[-1])
+    except Exception as exc:
+        downloads[key] = f"Download fehlgeschlagen: {exc}"
+        log.warning("Stimmpaket %s nicht ladbar: %s", pack, exc)
+    await broadcaster.send({"type": "voices_changed"})
+
+
+@app.put("/api/voices/visibility")
+async def voices_visibility(body: dict):
+    """Stimmen ein-/ausblenden ({Schlüssel: true/false}). Aktivierte
+    Kokoro-Katalogstimmen werden dabei nachgeladen. Wird die gewählte Stimme
+    ausgeblendet, springt die Auswahl auf die erste sichtbare Stimme."""
+    sync_clone_voices()
+    vis = dict(config.get("voice_visibility") or {})
+    for key, on in body.items():
+        if key in VOICES:
+            vis[key] = bool(on)
+            if on and needs_download(key) and downloads.get(key) != "läuft":
+                asyncio.create_task(_download_voicepack(key))
+    changes: dict = {"voice_visibility": vis}
+    if not vis.get(config.get("voice"), True):
+        usable = available_voices(None, vis)
+        if usable:
+            changes["voice"] = DEFAULT_VOICE if any(v["key"] == DEFAULT_VOICE for v in usable) \
+                else usable[0]["key"]
+            speaker.skip()
+    config.update(changes)
     await broadcaster.send({"type": "voices_changed"})
     return {"ok": True, "voice": config.get("voice")}
 

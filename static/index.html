@@ -34,9 +34,16 @@
       <span class="row">
         <select id="voice"></select>
         <button id="rename-voice" type="button" title="Anzeigenamen dieser Stimme ändern">✎</button>
+        <button id="hide-voice" type="button" title="Diese Stimme aus der Liste entfernen (über „Stimmen verwalten“ wieder holbar)">🗑</button>
         <button id="apply-voice" type="button" title="Diese Stimme sofort verwenden">Wechseln</button>
       </span>
     </label>
+    <button id="manage-voices" type="button" class="btn-link">Stimmen verwalten …</button>
+    <div id="voice-manager" class="voice-manager hidden">
+      <input id="voice-filter" type="search" placeholder="Stimmen filtern, z. B. Pocket, weiblich, Englisch …" autocomplete="off" spellcheck="false">
+      <p class="hint">Haken setzen = Stimme erscheint in der Auswahl. Englische Kokoro-Stimmen werden beim Aktivieren einmalig geladen (wenige MB). Eigene Stimmen hier nur ausblenden – ganz löschen geht unter „Eigene Stimme erstellen“.</p>
+      <div id="voice-groups"></div>
+    </div>
   </section>
 
   <section class="group live">
@@ -178,6 +185,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=23"></script>
+<script src="/static/app.js?v=24"></script>
 </body>
 </html>

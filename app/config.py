@@ -49,6 +49,10 @@ DEFAULTS: dict[str, Any] = {
     # Eigene Anzeigenamen für Stimmen (Stimmen-Schlüssel -> Name), in der GUI
     # über "Umbenennen" gesetzt; leerer Name = Standardname.
     "voice_labels": {},
+    # Sichtbarkeit in der Stimmauswahl (Stimmen-Schlüssel -> an/aus), gesetzt
+    # über "Stimmen verwalten" bzw. "Aus der Liste entfernen". Nicht eingetragene
+    # Stimmen folgen ihrem Standard (Katalogstimmen aus, alle anderen an).
+    "voice_visibility": {},
     "cooldown_seconds": 10, # Mindestabstand zwischen zwei Nachrichten je User
     "queue_limit": 10,      # max. wartende Nachrichten; ältere werden verworfen
     "bot_blocklist": [
@@ -148,6 +152,10 @@ class ConfigStore:
                     for k, v in value.items()
                     if str(v).strip()
                 }
+            elif key == "voice_visibility":
+                if not isinstance(value, dict):
+                    continue
+                value = {str(k): bool(v) for k, v in value.items()}
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":
