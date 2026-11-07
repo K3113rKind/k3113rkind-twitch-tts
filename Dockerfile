@@ -62,9 +62,14 @@ ARG CPU_TORCH_INDEX=https://download.pytorch.org/whl/cpu
 RUN case " $EXTRA_ENGINES " in *" neutts "*) \
       apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
       && python -m venv /opt/neutts \
-      && /opt/neutts/bin/pip install --no-cache-dir torch torchaudio --index-url "$CPU_TORCH_INDEX" \
-      && /opt/neutts/bin/pip install --no-cache-dir "neutts[llama]" \
+      && /opt/neutts/bin/pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url "$CPU_TORCH_INDEX" \
+      && /opt/neutts/bin/pip install --no-cache-dir "neutts[llama]" "torch==2.8.0" "torchaudio==2.8.0" \
            --extra-index-url "$CPU_TORCH_INDEX" \
+      && for v in 0.13.0 0.12.0 0.11.0 0.10.0; do \
+           /opt/neutts/bin/python -c "import neutts" >/dev/null 2>&1 && break; \
+           echo "neucodec/torchtune braucht ältere torchao – versuche $v"; \
+           /opt/neutts/bin/pip install --no-cache-dir "torchao==$v" --extra-index-url "$CPU_TORCH_INDEX" || true; \
+         done \
       && mkdir -p /opt/neutts/samples \
       && for f in greta.wav greta.txt greta.pt; do \
            python -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" \
