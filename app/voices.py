@@ -284,7 +284,7 @@ def sync_clone_voices() -> None:
                 continue
             for size, repo in QWEN_BASE_MODELS.items():
                 wanted[f"klon-{size}-{wav.stem}"] = {
-                    "label": f"{wav.stem} · eigene Stimme, Qwen {size.upper()} – Deutsch (Test, langsam)",
+                    "label": f"{wav.stem} · Qwen {size.upper()} – Deutsch (Test, langsam)",
                     "engine": CLONE_ENGINE,
                     "model": repo,
                     "ref_wav": str(wav),
@@ -294,7 +294,7 @@ def sync_clone_voices() -> None:
                 }
             for key, (lang, model_name) in POCKET_MODELS.items():
                 wanted[f"klon-{key}-{wav.stem}"] = {
-                    "label": f"{wav.stem} · eigene Stimme, {model_name} – Deutsch (Test)",
+                    "label": f"{wav.stem} · {model_name} – Deutsch (Test)",
                     "engine": POCKET_CLONE_ENGINE,
                     "language": lang,
                     "ref_wav": str(wav),
@@ -302,7 +302,7 @@ def sync_clone_voices() -> None:
                     "group": "Eigene Stimmen",
                 }
             wanted[f"klon-neutts-{wav.stem}"] = {
-                "label": f"{wav.stem} · eigene Stimme, NeuTTS – Deutsch (Test)",
+                "label": f"{wav.stem} · NeuTTS – Deutsch (Test)",
                 "engine": NEUTTS_ENGINE,
                 "ref_wav": str(wav),
                 "ref_txt": str(txt),
@@ -311,7 +311,7 @@ def sync_clone_voices() -> None:
                 "custom_ext": True,
             }
             wanted[f"klon-chatterbox-{wav.stem}"] = {
-                "label": f"{wav.stem} · eigene Stimme, Chatterbox – Deutsch (Test, langsam)",
+                "label": f"{wav.stem} · Chatterbox – Deutsch (Test, langsam)",
                 "engine": CHATTERBOX_ENGINE,
                 "ref_wav": str(wav),
                 "lang": "d",
@@ -320,7 +320,7 @@ def sync_clone_voices() -> None:
             }
         for pack in sorted((folder / "kokoro").glob("*.pt")):
             wanted[f"klon-kokoro-{pack.stem}"] = {
-                "label": f"{pack.stem} · eigene Stimme, Kokoro – Deutsch (Test)",
+                "label": f"{pack.stem} · Kokoro – Deutsch (Test)",
                 "backbone": KOKORO_CUSTOM_BACKBONE,
                 "voicepack_file": str(pack),
                 "custom_kokoro": True,

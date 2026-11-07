@@ -14,7 +14,7 @@ github.com/RobViren/kvoicewalk), angepasst an das deutsche Kokoro
     (zwei verschiedene Sätze klingen nach derselben Stimme) und Klangmerkmalen.
 
 Jede Verbesserung wird sofort als /ref/kokoro/NAME.pt gespeichert – die
-Stimme erscheint in der Weboberfläche ("NAME · eigene Stimme, Kokoro") und
+Stimme erscheint in der Weboberfläche ("NAME · Kokoro") und
 wird während der Suche immer besser. Abbrechen jederzeit möglich, mit
 --weiter geht es vom letzten Stand aus weiter.
 
