@@ -119,6 +119,14 @@
       <input id="speed" type="range" min="0.5" max="2" step="0.05" value="1">
       <span id="speed-note" class="muted hidden"></span>
     </label>
+    <label id="tempo-row" class="hidden">Tempo-Verfahren (Qwen)
+      <select id="qwen_tempo">
+        <option value="rubberband">Rubber Band (wie anfangs)</option>
+        <option value="rubberband_kurz">Rubber Band, kurzes Fenster (klarer bei Sprache?)</option>
+        <option value="atempo">atempo (ohne Phasen-Vocoder)</option>
+        <option value="anweisung">nur Anweisung (Presets; eigene Stimmen unverändert)</option>
+      </select>
+    </label>
 
     <label class="check">
       <input id="read_username" type="checkbox" checked>
@@ -213,6 +221,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=36"></script>
+<script src="/static/app.js?v=37"></script>
 </body>
 </html>

@@ -25,6 +25,7 @@ const el = {
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
   cloneList: $("clone-list"), cloneResult: $("clone-result"),
   cloneCandsBox: $("clone-cands-box"), cloneCands: $("clone-cands"), cloneText: $("clone-text"), cloneTextSave: $("clone-text-save"),
+  tempo: $("qwen_tempo"), tempoRow: $("tempo-row"),
   style: $("qwen_style"), styleCustom: $("qwen_style_custom"), styleRow: $("style-row"),
   temperature: $("qwen_temperature"), temperatureVal: $("temperature-val"), temperatureRow: $("temperature-row"),
   perf: $("perf"),
@@ -301,16 +302,20 @@ function updateTemperatureRow() {
   el.temperatureRow.classList.toggle("hidden", !(opt && opt.dataset.qwen));
   el.styleRow.classList.toggle("hidden", !(opt && opt.dataset.styleable));
   el.styleCustom.classList.toggle("hidden", el.style.value !== "eigen");
-  // Qwen: Presets grob per Anweisung, eigene Stimmen werden nachträglich gestreckt
+  // Qwen: fertige Ausgabe strecken (Verfahren wählbar) oder nur Anweisung (Presets)
   const qwen = !!(opt && opt.dataset.qwen), styleable = !!(opt && opt.dataset.styleable);
   const pocket = !!(opt && opt.dataset.pocket);
-  el.speed.disabled = pocket;
+  const instructOnly = el.tempo.value === "anweisung";
+  el.tempoRow.classList.toggle("hidden", !qwen);
+  el.speed.disabled = pocket || (qwen && instructOnly && !styleable);
   el.speedNote.classList.toggle("hidden", !qwen && !pocket);
   el.speedNote.textContent = pocket
     ? "Pocket TTS: kein Tempo-Regler, Tempo kommt aus der Stimme"
-    : !qwen ? "" : styleable
+    : !qwen ? "" : !instructOnly
+    ? "Qwen: Ausgabe wird tonhöhenneutral gestreckt – kleine Änderungen klingen am natürlichsten"
+    : styleable
     ? "Qwen: wirkt grob als Anweisung (langsamer/schneller), nicht exakt"
-    : "Eigene Stimme: Tempo wird nachträglich angepasst (tonhöhenneutral) – kleine Änderungen klingen am natürlichsten";
+    : "Eigene Stimme: Tempo kommt aus der Referenzaufnahme";
 }
 
 // Leistung der letzten Ausgabe (Testtext oder Twitch), z. B.
@@ -354,6 +359,7 @@ function collectConfig() {
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
     qwen_temperature: parseFloat(el.temperature.value),
     qwen_style: el.style.value,
+    qwen_tempo: el.tempo.value,
     qwen_style_custom: el.styleCustom.value,
   };
 }
@@ -388,6 +394,7 @@ function applyConfig(c) {
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
   el.style.value = c.qwen_style || "neutral";
+  el.tempo.value = c.qwen_tempo || "rubberband";
   el.styleCustom.value = c.qwen_style_custom || "";
   updateTemperatureRow();
   updateSliderLabels();
@@ -423,6 +430,7 @@ el.voice.addEventListener("change", () => {
   }
 });
 el.style.addEventListener("change", () => { updateTemperatureRow(); saveConfig(); });
+el.tempo.addEventListener("change", () => { updateTemperatureRow(); saveConfig(); });
 el.styleCustom.addEventListener("change", saveConfig);
 
 // Ganzen Twitch-Link einfügen können: https://www.twitch.tv/name -> name

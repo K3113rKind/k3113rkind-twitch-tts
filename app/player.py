@@ -336,9 +336,12 @@ class ChatSpeaker:
     def _gen_params(cfg) -> tuple:
         style = cfg["qwen_style"]
         instruct = cfg["qwen_style_custom"] if style == "eigen" else QWEN_STYLES.get(style)
-        # Qwen-Tempo: Preset-Stimmen per Anweisung; eigene Stimmen werden
-        # nachträglich gestreckt (klang.apply_tempo, in _speak_inner).
-        return cfg["speed"], cfg["qwen_temperature"], speed_instruct(instruct, cfg["speed"])
+        # Qwen-Tempo: fertige Ausgabe strecken (klang.apply_tempo, in
+        # _speak_inner) – oder bei "anweisung" nur Presets per Anweisung.
+        # Tempo als Anweisung nur, wenn nicht gestreckt wird (sonst doppelt)
+        if cfg.get("qwen_tempo", "rubberband") == "anweisung":
+            instruct = speed_instruct(instruct, cfg["speed"])
+        return cfg["speed"], cfg["qwen_temperature"], instruct
 
     @staticmethod
     def _chunks(text: str, voice: str) -> list[str]:
@@ -468,10 +471,10 @@ class ChatSpeaker:
         # (gespielt wird trotzdem der Reihe nach). Sonst immer nur den
         # nächsten, während der aktuelle spielt.
         parallel = self.tts.parallel(voice)
-        # Eigene Qwen-Stimmen (Klone) ignorieren Tempo-Anweisungen -> fertige
-        # Ausgabe tonhöhenneutral strecken (Presets: Anweisung, Kokoro: selbst)
-        spec = VOICES.get(voice, {})
-        clone_tempo = (is_qwen(voice) and spec.get("engine") != "qwen"
+        # Qwen kennt kein Tempo -> fertige Ausgabe tonhöhenneutral strecken
+        # (Kokoro regelt es selbst, Pocket hat keinen Regler)
+        tempo_method = cfg.get("qwen_tempo", "rubberband")
+        clone_tempo = (is_qwen(voice) and tempo_method != "anweisung"
                        and abs(float(speed or 1.0) - 1.0) > 0.01)
         pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
         skipped = False
@@ -545,7 +548,7 @@ class ChatSpeaker:
             samples = result.samples
             if clone_tempo:
                 samples = await asyncio.to_thread(
-                    klang.apply_tempo, samples, result.sample_rate, speed)
+                    klang.apply_tempo, samples, result.sample_rate, speed, tempo_method)
             name_split = self._is_name_chunk(chunks[0], msg)
             if name_split and idx == 0:
                 # Namensansage: Stille am Ende weg, der Text schließt direkt an
