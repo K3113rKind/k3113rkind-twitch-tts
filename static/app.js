@@ -16,7 +16,8 @@ const el = {
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   hideVoice: $("hide-voice"), manageVoices: $("manage-voices"), voiceManager: $("voice-manager"),
   voiceFilter: $("voice-filter"), voiceGroups: $("voice-groups"),
-  shareUrl: $("share-url"), shareToken: $("share-token"), shareCopy: $("share-copy"), shareNew: $("share-new"),
+  prodUrl: $("prod-url"), shareToken: $("share-token"), shareSelfUrl: $("share-self-url"),
+  shareStatus: $("share-status"), sharePublish: $("share-publish"),
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
@@ -693,7 +694,10 @@ el.hideVoice.addEventListener("click", () => {
 el.manageVoices.addEventListener("click", () => {
   const show = el.voiceManager.classList.toggle("hidden") === false;
   el.manageVoices.textContent = show ? "Stimmen verwalten schließen" : "Stimmen verwalten …";
-  if (show) loadVoiceCatalog();
+  if (show) {
+    loadVoiceCatalog();
+    fetch("/api/share/state").then((r) => r.json()).then(showShareState).catch(() => null);
+  }
 });
 
 const openGroups = new Set();
@@ -751,28 +755,56 @@ async function loadVoiceCatalog() {
 }
 
 async function setShared(changes) {
-  await fetch("/api/voices/shared", {
+  const r = await fetch("/api/voices/shared", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes),
-  }).catch(() => null);
+  }).then((x) => x.json()).catch(() => null);
+  if (r) showShareState(r);
+}
+
+function showShareState(st) {
+  el.shareStatus.textContent = st.pending
+    ? `${st.draft} freigegeben – Änderungen noch nicht übernommen`
+    : `${st.published} Stimme${st.published === 1 ? "" : "n"} in der Produktiv-Instanz`;
+  el.sharePublish.classList.toggle("btn-primary", !!st.pending);
 }
 
 function fillShareInfo(cfg) {
-  // Hinter einem Reverse-Proxy stimmt die Adresse im Browser nicht – dann
-  // allgemeiner Hinweis statt einer falschen URL.
-  el.shareUrl.textContent = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)
-    ? `http://${location.hostname}:${location.port || 80}` : "LAN-Adresse dieses CTs, Port 8380";
-  el.shareToken.value = cfg.share_token || "";
+  if (document.activeElement !== el.prodUrl) el.prodUrl.value = cfg.prod_url || "";
+  if (document.activeElement !== el.shareSelfUrl) {
+    // Hinter einem Reverse-Proxy passt die Browser-Adresse nicht – nur IP-Adressen vorschlagen
+    const guess = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.origin : "";
+    el.shareSelfUrl.value = cfg.share_self_url || guess;
+  }
+  el.shareToken.placeholder = cfg.share_token_set ? "gespeichert" : "";
 }
 
-el.shareCopy.addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(el.shareToken.value); el.shareCopy.textContent = "Kopiert"; }
-  catch { el.shareToken.select(); }
-  setTimeout(() => { el.shareCopy.textContent = "Kopieren"; }, 1500);
-});
-el.shareNew.addEventListener("click", async () => {
-  if (!confirm("Neuen Schlüssel erzeugen? Die Freunde-Instanz braucht danach den neuen Schlüssel.")) return;
-  const r = await fetch("/api/share/token", { method: "POST" }).then((x) => x.json()).catch(() => null);
-  if (r) el.shareToken.value = r.token;
+async function saveShareSettings() {
+  const changes = { prod_url: el.prodUrl.value, share_self_url: el.shareSelfUrl.value };
+  if (el.shareToken.value.trim()) changes.share_token = el.shareToken.value.trim();
+  const c = await fetch("/api/config", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes),
+  }).then((x) => x.json()).catch(() => null);
+  if (c) { el.shareToken.value = ""; fillShareInfo(c); }
+}
+for (const input of [el.prodUrl, el.shareToken, el.shareSelfUrl]) {
+  input.addEventListener("change", saveShareSettings);
+}
+
+el.sharePublish.addEventListener("click", async () => {
+  el.sharePublish.disabled = true;
+  el.shareStatus.textContent = "Übertrage …";
+  try {
+    await saveShareSettings();
+    const res = await fetch("/api/share/publish", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ self_url: el.shareSelfUrl.value }),
+    });
+    const r = await res.json().catch(() => ({}));
+    if (res.ok) showShareState(r);
+    else el.shareStatus.textContent = r.detail || "Übertragung fehlgeschlagen";
+  } finally {
+    el.sharePublish.disabled = false;
+  }
 });
 
 function applyVoiceFilter() {

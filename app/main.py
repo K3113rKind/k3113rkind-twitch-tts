@@ -12,7 +12,6 @@ import time
 import re
 import shutil
 import sys
-import secrets
 import tempfile
 import wave
 from collections import deque
@@ -113,15 +112,23 @@ def _status() -> dict:
     }
 
 
+def _public_config() -> dict:
+    """Konfiguration für die GUI – den Schlüssel der Produktiv-Instanz nie ausliefern."""
+    data = config.as_dict()
+    data["share_token_set"] = bool(data.pop("share_token", ""))
+    return data
+
+
 @app.get("/api/config")
 async def get_config():
-    return config.as_dict()
+    return _public_config()
 
 
 @app.put("/api/config")
 async def put_config(changes: dict):
     try:
-        return config.update(changes)
+        config.update(changes)
+        return _public_config()
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Ungültiger Wert: {exc}")
 
@@ -510,35 +517,44 @@ async def voices_visibility(body: dict):
     return {"ok": True, "voice": config.get("voice")}
 
 
-# ------------------------------------- Freigabe für die stabile Instanz
-# Die "Freunde"-Instanz holt sich hierüber nur die ausdrücklich freigegebenen
-# Stimmen (zweites Häkchen in "Stimmen verwalten"). Alles andere – Klonen,
-# Training, nicht freigegebene eigene Stimmen – bleibt unerreichbar.
+# ------------------------------------- Freigabe für die Produktiv-Instanz
+# Die Produktiv-Instanz ("Freunde") bekommt nur die ausdrücklich freigegebenen
+# und übernommenen Stimmen (zweites Häkchen in "Stimmen verwalten", dann "Für
+# Produktiv übernehmen"). Alles andere – Klonen, Training, nicht freigegebene
+# eigene Stimmen – bleibt unerreichbar.
 share_lock = asyncio.Lock()  # eine Anfrage nach der anderen, schont die CPU
 
 
 def _check_share_token(request: Request) -> None:
     auth = request.headers.get("authorization", "")
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-    if not token or not hmac.compare_digest(token, config.get("share_token") or ""):
-        raise HTTPException(401, "Ungültiger Freigabe-Schlüssel.")
+    expected = config.get("share_token") or ""
+    if not token or not expected or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, "Ungültiger Schlüssel.")
 
 
-def _shared_voices() -> list[dict]:
+def _voice_list(keys) -> list[dict]:
     sync_clone_voices()
     labels = config.get("voice_labels")
     out = []
-    for key in config.get("shared_voices") or []:
+    for key in keys or []:
         if key in VOICES and is_available(key):
-            spec = VOICES[key]
             out.append({"key": key, "label": display_name(key, labels),
-                        "group": spec.get("group", "Sonstige"), "lang": spec.get("lang", "d")})
+                        "lang": VOICES[key].get("lang", "d")})
     return out
+
+
+def _share_state() -> dict:
+    draft = sorted(config.get("shared_voices") or [])
+    published = sorted(config.get("shared_published") or [])
+    return {"draft": len(draft), "published": len(published), "pending": draft != published,
+            "configured": bool(config.get("prod_url") and config.get("share_token"))}
 
 
 @app.put("/api/voices/shared")
 async def voices_shared(body: dict):
-    """Stimmen für die stabile Instanz freigeben ({Schlüssel: true/false})."""
+    """Häkchen "Freigeben" setzen ({Schlüssel: true/false}) – wirkt erst
+    nach "Für Produktiv übernehmen"."""
     sync_clone_voices()
     shared = set(config.get("shared_voices") or [])
     for key, on in body.items():
@@ -547,20 +563,50 @@ async def voices_shared(body: dict):
         else:
             shared.discard(key)
     config.update({"shared_voices": sorted(shared)})
-    return {"ok": True, "shared": config.get("shared_voices")}
+    return {"ok": True, **_share_state()}
 
 
-@app.post("/api/share/token")
-async def share_token_new():
-    """Neuen Freigabe-Schlüssel erzeugen – der alte gilt sofort nicht mehr."""
-    config.update({"share_token": secrets.token_urlsafe(24)})
-    return {"token": config.get("share_token")}
+@app.get("/api/share/state")
+async def share_state():
+    return _share_state()
+
+
+@app.post("/api/share/publish")
+async def share_publish(body: dict):
+    """Freigegebene Stimmen an die Produktiv-Instanz übertragen. body.self_url:
+    Adresse dieser Instanz aus Sicht der Produktiv-Instanz."""
+    import httpx
+
+    self_url = str(body.get("self_url") or "").strip().rstrip("/")
+    if self_url:
+        config.update({"share_self_url": self_url})
+    prod, token, self_url = config.get("prod_url"), config.get("share_token"), config.get("share_self_url")
+    if not (prod and token and self_url):
+        raise HTTPException(400, "Bitte Adresse der Produktiv-Instanz, Schlüssel und eigene Adresse eintragen.")
+    keys = sorted(config.get("shared_voices") or [])
+    voices = await asyncio.to_thread(_voice_list, keys)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{prod}/api/remote/sync",
+                                  headers={"Authorization": f"Bearer {token}"},
+                                  json={"url": self_url, "voices": voices})
+    except Exception as exc:
+        raise HTTPException(502, f"Produktiv-Instanz nicht erreichbar: {exc}")
+    if r.status_code == 401:
+        raise HTTPException(502, "Produktiv-Instanz lehnt den Schlüssel ab.")
+    if r.status_code == 404:
+        raise HTTPException(502, "Produktiv-Instanz kennt die Freigabe noch nicht – bitte dort aktualisieren.")
+    if r.status_code != 200:
+        raise HTTPException(502, f"Produktiv-Instanz: Fehler {r.status_code}")
+    config.update({"shared_published": [v["key"] for v in voices]})
+    log.info("Freigabe übernommen: %d Stimmen an %s", len(voices), prod)
+    return {"ok": True, **_share_state()}
 
 
 @app.get("/api/share/voices")
 async def share_voices(request: Request):
     _check_share_token(request)
-    return {"voices": await asyncio.to_thread(_shared_voices)}
+    return {"voices": await asyncio.to_thread(_voice_list, config.get("shared_published"))}
 
 
 @app.post("/api/share/synthesize")
@@ -572,7 +618,7 @@ async def share_synthesize(request: Request, body: dict):
     speed = min(max(float(body.get("speed") or 1.0), 0.5), 2.0)
     if not text:
         raise HTTPException(400, "Kein Text.")
-    if voice not in (config.get("shared_voices") or []):
+    if voice not in (config.get("shared_published") or []):
         raise HTTPException(403, "Diese Stimme ist nicht freigegeben.")
     sync_clone_voices()
     if voice not in VOICES or not is_available(voice):
