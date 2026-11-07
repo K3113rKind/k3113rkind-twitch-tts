@@ -12,6 +12,7 @@ carries status/text for the UI, no audio.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import time
 from collections import deque
@@ -36,6 +37,8 @@ NAME_SPLIT_MIN_CHARS = 25
 # Länge, an Satzenden geteilt) und versetzt gestartet – wie Chat-Nachrichten
 SENTENCE_CHUNK_CHARS = 180
 CHUNK_STAGGER_S = 2.0
+# Lange Texte: so viele Sätze müssen fertig sein, bevor die Wiedergabe startet
+PREBUFFER_CHUNKS = int(os.environ.get("QWEN_PREBUFFER", "3") or 3)
 
 log = logging.getLogger(__name__)
 
@@ -460,7 +463,17 @@ class ChatSpeaker:
                     else [synth(chunks[0])])
         skipped = False
 
-        for idx in range(len(chunks)):
+        # Vorpuffer: erst losspielen, wenn die ersten PREBUFFER_CHUNKS Sätze
+        # fertig sind. Die freien Prozesse rechnen währenddessen schon die
+        # nächsten Sätze – der Vorsprung überbrückt die späteren Wartezeiten.
+        if parallel and len(chunks) > 1:
+            n = min(PREBUFFER_CHUNKS, len(chunks))
+            _done, skipped = await self._wait_or_skip(asyncio.gather(*pendings[:n]))
+            if skipped:
+                for rest in pendings:
+                    rest.cancel()
+
+        for idx in range(0 if skipped else len(chunks)):
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 for rest in pendings[idx + 1:]:
