@@ -94,76 +94,50 @@ QWEN_CHUNK_GROWTH = 1.4
 
 def split_for_qwen(text: str, max_chars: int = QWEN_CHUNK_CHARS,
                    first_max: int | None = None) -> list[str]:
-    """Text an Satzenden (notfalls Kommas/Leerzeichen) in Abschnitte teilen.
-    first_max: kürzere Obergrenze nur für den ersten Abschnitt."""
-    if first_max and len(text.strip()) > first_max:
-        # Leerraum vereinheitlichen, damit der Rest exakt hinter dem Kopf beginnt
-        rest = re.sub(r"\s+", " ", text).strip()
-        chunks: list[str] = []
-        limit = first_max
-        while rest:
-            if len(rest) <= limit:
-                chunks.append(rest)
-                break
-            head, rest = _take_head(rest, limit)
-            chunks.append(head)
-            # vom tatsächlich erzeugten Abschnitt aus wachsen, aber nie unter die
-            # bisherige Grenze schrumpfen (sonst zerfällt ein Text mit langen
-            # Sätzen in immer kleinere Stücke mitten im Satz)
-            limit = min(max_chars, max(int(limit * 1.2), int(len(head) * QWEN_CHUNK_GROWTH)))
-        # winzigen Rest an den vorletzten Abschnitt hängen, wenn er passt
-        if len(chunks) > 1 and len(chunks[-1]) < 40 and len(chunks[-2]) + 1 + len(chunks[-1]) <= max_chars:
-            tail = chunks.pop()  # erst entnehmen: chunks[-2] += chunks.pop() trifft
-            chunks[-1] += " " + tail  # sonst nach dem pop den falschen Index
-        return chunks
-    text = text.strip()
-    if len(text) <= max_chars:
-        return [text] if text else []
-    sentences = [s for s in re.split(r"(?<=[.!?…;:])\s+|\n+", text) if s.strip()]
-    pieces: list[str] = []
-    for sentence in sentences:
-        sentence = sentence.strip()
-        # Überlange Einzelsätze an Kommas, sonst an Leerzeichen zerlegen
-        while len(sentence) > max_chars:
-            cut = sentence.rfind(", ", 0, max_chars)
-            if cut < max_chars // 3:
-                cut = sentence.rfind(" ", 0, max_chars)
-            if cut <= 0:
-                cut = max_chars
-            pieces.append(sentence[:cut + 1].strip())
-            sentence = sentence[cut + 1:].strip()
-        if sentence:
-            pieces.append(sentence)
+    """Text in Abschnitte aus GANZEN Sätzen teilen – ein Satz wird nie
+    zerschnitten, egal wie lang er ist (ein Wechsel mitten im Satz klingt
+    unnatürlich). Kurze Sätze werden zusammengefasst, solange der Abschnitt
+    max_chars nicht überschreitet; der erste Abschnitt bis first_max (für
+    einen schnellen Start), danach wachsen die Abschnitte."""
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    if not text:
+        return []
+    sentences = _sentences(text)
     chunks: list[str] = []
-    for piece in pieces:
-        if chunks and len(chunks[-1]) + 1 + len(piece) <= max_chars:
-            chunks[-1] += " " + piece
-        else:
-            chunks.append(piece)
+    limit = first_max or max_chars
+    for sentence in sentences:
+        if chunks and len(chunks[-1]) + 1 + len(sentence) <= limit:
+            chunks[-1] += " " + sentence
+            continue
+        if chunks:
+            # nächster Abschnitt darf größer werden (Vorlauf wächst mit)
+            limit = min(max_chars, max(int(limit * 1.2), int(len(chunks[-1]) * QWEN_CHUNK_GROWTH)))
+        chunks.append(sentence)
+    # winzigen Rest an den vorletzten Abschnitt hängen
+    if len(chunks) > 1 and len(chunks[-1]) < 40:
+        tail = chunks.pop()
+        chunks[-1] += " " + tail
     return chunks
 
 
-def _take_head(text: str, limit: int) -> tuple[str, str]:
-    """Ersten Satz (oder Satzteil bis Komma/Leerzeichen) bis limit Zeichen."""
-    sentences = [s for s in re.split(r"(?<=[.!?…;:])\s+|\n+", text) if s.strip()]
-    head = sentences[0].strip()
-    # mehrere kurze Sätze dürfen zusammen in den ersten Abschnitt
-    for s in sentences[1:]:
-        # sehr kurzen Anfang ("Bild:") mit dem nächsten Satz verbinden und
-        # notfalls unten am Komma/Leerzeichen kürzen
-        if len(head) + 1 + len(s.strip()) > limit and len(head) >= limit // 3:
-            break
-        head += " " + s.strip()
-        if len(head) > limit:
-            break
-    if len(head) > limit:
-        cut = head.rfind(", ", 0, limit)
-        if cut < limit // 3:
-            cut = head.rfind(" ", 0, limit)
-        if cut > 0:
-            head = head[:cut + 1].strip()
-    assert text.startswith(head)
-    return head, text[len(head):].strip()
+_SENTENCE_END = re.compile(r"(?<=[.!?…])[\"“”»«'’)\]]*\s+|\n+")
+
+
+def _sentences(text: str) -> list[str]:
+    """Text in ganze Sätze teilen (nur an . ! ? … und Zeilenumbrüchen –
+    nie an Komma, Semikolon oder Doppelpunkt). Anführungszeichen/Klammern
+    hinter dem Satzende bleiben beim Satz."""
+    parts, pos = [], 0
+    for m in _SENTENCE_END.finditer(text):
+        end = m.start() + len(m.group(0).rstrip())
+        piece = text[pos:end].strip()
+        if piece:
+            parts.append(piece)
+        pos = m.end()
+    tail = text[pos:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 # Qwen würfelt bei jeder Erzeugung (Sampling, Temperatur 0.9) – derselbe Satz
