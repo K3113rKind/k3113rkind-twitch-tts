@@ -504,3 +504,15 @@ def voice_catalog(custom: dict | None = None, visibility: dict | None = None,
             "shared": key in (shared or ()),
         })
     return [{"group": g, "voices": v} for g, v in groups.items()]
+
+
+# Fester Satz für den Knopf "Hörprobe" – je nach Sprache der Stimme
+PREVIEW_TEXT = {
+    "d": "Hallo! Das ist eine Hörprobe. So klinge ich, wenn ich euren Chat vorlese.",
+    "en": "Hi there! This is a voice preview. This is how I sound when I read your chat.",
+}
+
+
+def preview_text(voice_key: str) -> str:
+    lang = VOICES.get(voice_key, VOICES[DEFAULT_VOICE]).get("lang", "d")
+    return PREVIEW_TEXT["d"] if lang == "d" else PREVIEW_TEXT["en"]

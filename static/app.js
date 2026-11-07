@@ -528,6 +528,29 @@ el.sayBtn.addEventListener("click", async () => {
 
 el.sayCancel.addEventListener("click", () => fetch("/api/say/cancel", { method: "POST" }));
 
+// Hörprobe: fester Satz, gleiche Sperre wie beim Testtext
+const previewBtn = document.getElementById("preview-voice");
+previewBtn.addEventListener("click", async () => {
+  if (running) { showError("Hörprobe geht nur, solange der Chat nicht vorgelesen wird."); return; }
+  ensureAudio();
+  previewBtn.disabled = true;
+  try {
+    clearTimeout(saveTimer);
+    await fetch("/api/config", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig()),
+    });
+    const res = await fetch("/api/preview", { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showError(body.detail || res.statusText);
+    } else hideError();
+  } catch (e) {
+    showError("Hörprobe fehlgeschlagen: " + e);
+  } finally {
+    previewBtn.disabled = false;
+  }
+});
+
 // Strg+Enter (bzw. Cmd+Enter) im Textfeld = Vorlesen
 el.sayText.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {

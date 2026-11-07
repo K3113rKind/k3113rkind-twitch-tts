@@ -29,7 +29,7 @@ from .tts import TTS
 from .twitch import TwitchChatClient
 from .voices import (DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
                      is_available, is_qwen, needs_download, ref_dir, sync_clone_voices,
-                     display_name, speed_instruct, voice_catalog)
+                     display_name, preview_text, speed_instruct, voice_catalog)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -230,6 +230,13 @@ async def apply_voice():
     if tts.pool_active and is_qwen(voice) and not tts.warming:
         asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
     return _status()
+
+
+@app.post("/api/preview")
+async def preview():
+    """Hörprobe: fester Satz mit der eingestellten Stimme, ohne Twitch-Chat."""
+    voice = config.get("voice")
+    return await say({"text": preview_text(voice if voice in VOICES else DEFAULT_VOICE)})
 
 
 @app.post("/api/say")
