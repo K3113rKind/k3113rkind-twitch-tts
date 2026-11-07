@@ -21,6 +21,7 @@ from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
+from .qwen_pool import with_priority
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
 from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen
 
@@ -391,9 +392,11 @@ class ChatSpeaker:
             if free <= 0:
                 break
             m.batched = True
-            # alle Abschnitte der Nachricht gleichzeitig anstoßen
-            for text in chunks:
+            # alle Abschnitte der Nachricht gleichzeitig anstoßen; Reihenfolge
+            # bei den Prozessen: ältere Nachricht zuerst, darin Satz für Satz
+            for n, text in enumerate(chunks):
                 task = asyncio.ensure_future(asyncio.to_thread(
+                    with_priority, (m.arrived, n),
                     self.tts.prefetch_one, text, voice, temperature, instruct))
                 self._prefetch_tasks.add(task)
                 task.add_done_callback(self._prefetch_done)
@@ -431,8 +434,11 @@ class ChatSpeaker:
         self._announced = msg
 
         def synth(chunk: str):
+            # Priorität: diese Nachricht, Abschnitt in Lesereihenfolge
+            prio = (msg.arrived, chunks.index(chunk))
             return asyncio.ensure_future(
-                asyncio.to_thread(self.tts.synthesize, chunk, voice, speed, temperature, instruct)
+                asyncio.to_thread(with_priority, prio, self.tts.synthesize,
+                                  chunk, voice, speed, temperature, instruct)
             )
 
         totals = {"compute": 0.0, "load": 0.0, "audio": 0.0, "decode": 0.0,

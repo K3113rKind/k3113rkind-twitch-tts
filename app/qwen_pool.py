@@ -35,7 +35,20 @@ import os
 import queue
 import threading
 import time
+import contextvars
 from concurrent.futures import Future
+
+# Reihenfolge der Aufträge: Wer wartet, kommt nach PRIORITY dran (kleiner =
+# früher), sonst nach Eingang. Der Player setzt (Eingang der Nachricht,
+# Abschnittsnummer) – so rechnet ein frei werdender Prozess immer den als
+# Nächstes benötigten Satz. asyncio.to_thread übernimmt den Wert in den Thread.
+PRIORITY: contextvars.ContextVar = contextvars.ContextVar("tts_priority", default=None)
+
+
+def with_priority(prio, fn, *args, **kwargs):
+    """fn im aktuellen Thread mit gesetzter Priorität aufrufen."""
+    PRIORITY.set(prio)
+    return fn(*args, **kwargs)
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +181,8 @@ class QwenPool:
         self._outq = None
         self._futures: dict[int, tuple[Future, int]] = {}
         self._next_id = 0
+        self._waiting: list[tuple] = []  # (Priorität, Ticket, erlaubte Prozesse)
+        self._ticket = 0
         self._started = False
 
     # ------------------------------------------------------------ Verwaltung
@@ -275,13 +290,24 @@ class QwenPool:
         rechnet dort und liefert (samples, Rechenzeit, Ladezeit, Decoder)."""
         self.start()
         allowed = {worker} if worker is not None else self._allowed(args.get("repo"))
+        prio = PRIORITY.get()
         with self._cond:
-            while not (self._idle & allowed):
-                if self._closed:
-                    raise RuntimeError("Rechenprozesse werden neu gestartet")
-                self._cond.wait()
-            if self._closed:
-                raise RuntimeError("Rechenprozesse werden neu gestartet")
+            self._ticket += 1
+            me = ((prio if prio is not None else (time.monotonic(), 0)), self._ticket, frozenset(allowed))
+            self._waiting.append(me)
+            try:
+                # Feste Reihenfolge: dran ist der wartende Auftrag mit der
+                # kleinsten Priorität, für den gerade ein passender Prozess frei ist
+                while True:
+                    if self._closed:
+                        raise RuntimeError("Rechenprozesse werden neu gestartet")
+                    servable = [w for w in self._waiting if self._idle & w[2]]
+                    if servable and min(servable) is me:
+                        break
+                    self._cond.wait()
+            finally:
+                self._waiting.remove(me)
+                self._cond.notify_all()
             i = min(self._idle & allowed)
             self._idle.discard(i)
             self._rebalance()
