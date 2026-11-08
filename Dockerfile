@@ -41,7 +41,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir python-multipart demucs faster-whisper "yt-dlp[default]" \
        --extra-index-url "$TORCH_INDEX" \
-    && python -c "import io, urllib.request, zipfile; z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip').read())); z.extract('deno', '/usr/local/bin')" \
+    && python -c "import io, time, urllib.request, zipfile; url = 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip'; exec('for n in range(6):\n try:\n  data = urllib.request.urlopen(url, timeout=120).read(); break\n except Exception as e:\n  print(\'deno-Download fehlgeschlagen (%s), neuer Versuch in %d s\' % (e, 10 * (n + 1)), flush=True); time.sleep(10 * (n + 1))\nelse:\n raise SystemExit(\'deno nicht ladbar (GitHub)\')'); zipfile.ZipFile(io.BytesIO(data)).extract('deno', '/usr/local/bin')" \
     && chmod +x /usr/local/bin/deno && deno --version | head -1 \
     && python -c "import torch, demucs, faster_whisper; print('Torch nach Klon-Werkzeugen:', torch.__version__)"
 
