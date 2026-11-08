@@ -48,6 +48,9 @@ class QueuedMessage:
     raw: bool = False  # Testtext aus der GUI: ohne Namensansage vorlesen
     arrived: float = field(default_factory=time.monotonic)  # für die Wartezeit-Anzeige
     batched: bool = False  # steckt in einer (laufenden/fertigen) Gruppenberechnung
+    # Testtext: wie viele Abschnitte vor dem Start fertig sein müssen
+    # (0 = direkt, 1–6, -1 = komplett; None = alte Automatik)
+    prebuffer: int | None = None
 
 
 def _trim_silence(samples, sr: int, head: bool, tail: bool, keep_s: float = 0.05):
@@ -192,12 +195,12 @@ class ChatSpeaker:
         self._maybe_prefetch()
         await self._push_queue_state()
 
-    async def say_text(self, text: str) -> None:
+    async def say_text(self, text: str, prebuffer: int | None = None) -> None:
         """Testtext aus der GUI vorlesen – ohne Twitch, ohne Filter, Cooldown
         und Queue-Limit, ohne Namensansage. Reiht sich normal in die
         Warteschlange ein, läuft also nie über eine Chat-Nachricht drüber."""
         self.start()
-        self._queue.append(QueuedMessage(username="Test", text=text, raw=True))
+        self._queue.append(QueuedMessage(username="Test", text=text, raw=True, prebuffer=prebuffer))
         self._queue_event.set()
         self._maybe_prefetch()
         await self._push_queue_state()
@@ -473,7 +476,11 @@ class ChatSpeaker:
         spec = VOICES.get(voice, {})
         clone_tempo = (is_qwen(voice) and spec.get("engine") != "qwen"
                        and abs(float(speed or 1.0) - 1.0) > 0.01)
-        pendings = [synth(c) for c in chunks] if parallel else [synth(chunks[0])]
+        # Verzögert vorlesen: auch ohne parallele Prozesse alle Abschnitte
+        # gleich anstoßen (rechnen dann nacheinander), damit der Vorrat entsteht
+        delayed = msg.raw and msg.prebuffer is not None and msg.prebuffer != 0
+        eager = parallel or delayed
+        pendings = [synth(c) for c in chunks] if eager else [synth(chunks[0])]
         skipped = False
 
         # Nur Anzeige: Fortschritt für die Oberfläche (wie viele Abschnitte
@@ -482,8 +489,11 @@ class ChatSpeaker:
         # Lange Testtexte (ab 3 Abschnitten): erst losspielen, wenn ein Vorrat
         # fertig ist – so viele Abschnitte wie Prozesse, mindestens 3, höchstens 5
         needed = 1
-        # nur Qwen (Pocket ist schnell genug), nur Testtext, nie Chat
-        if parallel and msg.raw and is_qwen(voice) and len(chunks) >= 3:
+        if msg.raw and msg.prebuffer is not None:
+            # Testtext: "Direkt vorlesen" (0) oder "Verzögert" mit 1–6 / komplett (-1)
+            needed = len(chunks) if msg.prebuffer < 0 else max(1, min(len(chunks), msg.prebuffer))
+        # alte Automatik (ältere Oberfläche): nur Qwen, nur Testtext, nie Chat
+        elif parallel and msg.raw and is_qwen(voice) and len(chunks) >= 3:
             needed = min(len(chunks), max(PREBUFFER_MIN, min(PREBUFFER_MAX, workers)))
         prog = {"type": "progress", "done": 0, "total": len(chunks), "playing": 0,
                 "needed": needed, "workers": workers}
@@ -507,7 +517,7 @@ class ChatSpeaker:
             result, skipped = await self._wait_or_skip(pendings[idx])
             if skipped:
                 break
-            if not parallel and idx + 1 < len(chunks):
+            if not eager and idx + 1 < len(chunks):
                 pendings.append(synth(chunks[idx + 1]))
                 pendings[-1].add_done_callback(push_progress)
             if len(chunks) > 1:

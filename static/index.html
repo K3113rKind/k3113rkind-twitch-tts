@@ -78,7 +78,19 @@
     </label>
     <div class="actions">
       <button id="say-cancel" type="button" class="btn-secondary" title="Testtext abbrechen (laufend und wartend)">Abbrechen</button>
-      <button id="say" type="button" class="btn-secondary" title="Strg+Enter">Vorlesen</button>
+      <button id="say" type="button" class="btn-secondary" title="Strg+Enter – startet, sobald der erste Satz fertig ist">Direkt vorlesen</button>
+    </div>
+    <div class="actions">
+      <select id="say-prebuffer" title="So viele Abschnitte werden vorab gerechnet, bevor das Vorlesen startet">
+        <option value="1">1 Abschnitt</option>
+        <option value="2">2 Abschnitte</option>
+        <option value="3" selected>3 Abschnitte</option>
+        <option value="4">4 Abschnitte</option>
+        <option value="5">5 Abschnitte</option>
+        <option value="6">6 Abschnitte</option>
+        <option value="all">kplt.</option>
+      </select>
+      <button id="say-delayed" type="button" class="btn-secondary" title="Erst die gewählte Anzahl Abschnitte (oder alles) rechnen, dann ohne Pausen vorlesen">Verzögert vorlesen</button>
     </div>
     <p id="say-hint" class="hint hidden">Gesperrt, solange der Chat vorgelesen wird – erst „Vorlesen stoppen“.</p>
   </section>
@@ -227,6 +239,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=42"></script>
+<script src="/static/app.js?v=43"></script>
 </body>
 </html>

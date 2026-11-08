@@ -21,6 +21,7 @@ const el = {
   dot: $("dot"), statusText: $("status-text"), now: $("now-playing"),
   errorBanner: $("error-banner"),
   sayText: $("say-text"), sayBtn: $("say"), sayCancel: $("say-cancel"), sayHint: $("say-hint"),
+  sayDelayed: $("say-delayed"), sayPrebuffer: $("say-prebuffer"),
   cloneUrl: $("clone-url"), cloneFile: $("clone-file"), cloneName: $("clone-name"),
   cloneSeconds: $("clone-seconds"), cloneStart: $("clone-start"), cloneStatus: $("clone-status"),
   cloneList: $("clone-list"), cloneResult: $("clone-result"),
@@ -123,7 +124,8 @@ function progressText() {
   if (!p || p.total < 2) return "";
   if (!p.playing) {
     return `${p.done} von ${p.total} Abschnitten fertig` +
-      (p.needed > 1 ? ` · Start, sobald ${p.needed} fertig sind` : "") +
+      (p.needed > 1 ? (p.needed >= p.total ? " · Start, sobald alles fertig ist"
+                                           : ` · Start, sobald ${p.needed} fertig sind`) : "") +
       (p.workers > 1 ? ` · ${p.workers} Prozesse` : "");
   }
   return `Abschnitt ${p.playing} von ${p.total} · ${p.done} fertig` +
@@ -569,11 +571,15 @@ function endTestText() {
 }
 function updateSayButton() {
   el.sayBtn.disabled = running || sayBusy;
+  el.sayDelayed.disabled = running || sayBusy;
   el.sayText.disabled = running;
   el.sayHint.classList.toggle("hidden", !running);
 }
 
-el.sayBtn.addEventListener("click", async () => {
+el.sayBtn.addEventListener("click", () => sayTest("direct"));
+el.sayDelayed.addEventListener("click", () => sayTest(el.sayPrebuffer.value));
+
+async function sayTest(prebuffer) {
   const text = el.sayText.value.trim();
   if (!text) { el.sayText.focus(); return; }
   if (running) return;
@@ -595,7 +601,7 @@ el.sayBtn.addEventListener("click", async () => {
     const res = await fetch("/api/say", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, prebuffer }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -614,7 +620,7 @@ el.sayBtn.addEventListener("click", async () => {
   } finally {
     updateSayButton();
   }
-});
+}
 
 el.sayCancel.addEventListener("click", () => fetch("/api/say/cancel", { method: "POST" }));
 
@@ -645,7 +651,7 @@ previewBtn.addEventListener("click", async () => {
 el.sayText.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
     ev.preventDefault();
-    el.sayBtn.click();
+    sayTest("direct");
   }
 });
 

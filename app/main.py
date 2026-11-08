@@ -283,7 +283,20 @@ async def say(body: dict):
     except Exception as exc:
         raise HTTPException(500, f"Stimme konnte nicht geladen werden: {exc}")
 
-    await speaker.say_text(text)
+    # "direct"/0 = sofort, 1–6 = so viele Abschnitte vorab, "all"/-1 = komplett
+    raw_pb = body.get("prebuffer")
+    if raw_pb in (None, ""):
+        prebuffer = None
+    elif str(raw_pb).lower() in ("all", "kplt", "-1"):
+        prebuffer = -1
+    elif str(raw_pb).lower() == "direct":
+        prebuffer = 0
+    else:
+        try:
+            prebuffer = max(0, min(6, int(raw_pb)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Ungültiger Wert für den Vorlauf.")
+    await speaker.say_text(text, prebuffer)
     return {"ok": True, "queue_size": speaker.queue_size}
 
 
