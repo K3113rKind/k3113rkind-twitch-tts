@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=27">
+<link rel="stylesheet" href="/static/style.css?v=28">
 </head>
 <body>
 <main class="panel">
@@ -67,6 +67,7 @@
 
   <section class="group live">
     <button id="audio-unlock" type="button" class="btn-unlock hidden">🔊 Ton auf diesem Gerät einschalten</button>
+    <div class="status-log" id="status-log" aria-live="polite"></div>
     <div class="now" id="now-playing">–</div>
     <div class="perf" id="perf"></div>
     <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, auf dem Handy darf auch das Display gesperrt sein. Nur nicht schließen. Der Ton läuft etwa 1–2 Sekunden hinter der Anzeige.</p>
@@ -239,6 +240,6 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=43"></script>
+<script src="/static/app.js?v=44"></script>
 </body>
 </html>

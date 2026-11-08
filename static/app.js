@@ -131,26 +131,56 @@ function progressText() {
   return `Abschnitt ${p.playing} von ${p.total} · ${p.done} fertig` +
     (p.done <= p.playing && p.playing < p.total ? " · nächster rechnet noch" : "");
 }
+/* ------------------------------------------------- Statusfeld (3 Zeilen)
+   Oben die aktuelle Aktion (wird laufend aktualisiert), darunter die zwei
+   davor; ältere verschwinden. */
+const statusLines = [];  // [{key, text, time}]
+function statusSet(key, text) {
+  const now = new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (statusLines.length && statusLines[0].key === key) {
+    statusLines[0].text = text;
+  } else {
+    statusLines.unshift({ key, text, time: now });
+    statusLines.length = Math.min(statusLines.length, 3);
+  }
+  const box = document.getElementById("status-log");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const l of statusLines) {
+    const div = document.createElement("div");
+    div.className = "line";
+    const t = document.createElement("span");
+    t.className = "time";
+    t.textContent = l.time;
+    div.append(t, document.createTextNode(l.text));
+    box.append(div);
+  }
+}
+let actionSeq = 0;  // jede neue Nachricht = neue Zeile
+
+let speakingMsg = null;
 function renderNowProgress() {
-  const span = document.getElementById("now-prog");
-  if (span) span.textContent = progressText();
+  if (!speakingMsg) return;
+  const pt = progressText();
+  statusSet("speak" + actionSeq, `Spricht: ${speakingMsg.username}` + (pt ? ` · ${pt}` : ""));
 }
 function showGenerating(msg) {
   stopGenerating();
   progress = null;
   const started = Date.now();
+  actionSeq += 1;
+  const key = "gen" + actionSeq;
+  speakingMsg = null;
+  // Text der Nachricht im Textfeld, Status im Statusfeld darüber
+  el.now.innerHTML = "";
+  const user = document.createElement("span");
+  user.className = "user";
+  user.textContent = msg.username;
+  el.now.append(user, document.createTextNode(": " + msg.text));
   const render = () => {
     const s = Math.floor((Date.now() - started) / 1000);
-    el.now.innerHTML = "";
-    const label = document.createElement("span");
-    label.className = "gen";
     const pt = progressText();
-    label.textContent = `Erzeuge Sprache … ${s} s` + (pt ? ` · ${pt}` : "");
-    const user = document.createElement("span");
-    user.className = "user";
-    user.textContent = msg.username;
-    el.now.append(label, document.createElement("br"), user,
-                  document.createTextNode(": " + msg.text));
+    statusSet(key, `Erzeuge Sprache für ${msg.username} … ${s} s` + (pt ? ` · ${pt}` : ""));
   };
   render();
   genRender = render;
@@ -168,10 +198,7 @@ function showNow(msg) {
   user.className = "user";
   user.textContent = msg.username;
   el.now.append(user, document.createTextNode(": " + msg.text));
-  const prog = document.createElement("div");
-  prog.id = "now-prog";
-  prog.className = "gen";
-  el.now.append(prog);
+  speakingMsg = msg;
   renderNowProgress();
 }
 
@@ -219,8 +246,12 @@ function connectWs() {
         break;
       case "done":
         if (msg.perf) showPerf(msg.perf);
+        if (speakingMsg) statusSet("done" + actionSeq, `Fertig: ${speakingMsg.username}`);
+        speakingMsg = null;
         // fällt durch
       case "stop_audio":
+        if (msg.type === "stop_audio" && (speakingMsg || genTimer)) statusSet("stop" + actionSeq, "Abgebrochen");
+        speakingMsg = null;
         stopGenerating();
         speaking = false;
         updateSkipButton();
@@ -232,6 +263,7 @@ function connectWs() {
         applyStatus(msg);
         break;
       case "paused":
+        if (msg.paused !== paused) { actionSeq += 1; statusSet("pause" + actionSeq, msg.paused ? "Pausiert" : "Fortgesetzt"); }
         setPaused(msg.paused);
         break;
       case "voices_changed":
@@ -240,6 +272,8 @@ function connectWs() {
         if (!el.voiceManager.classList.contains("hidden")) loadVoiceCatalog();
         break;
       case "error":
+        statusSet("err" + actionSeq, "Fehler: " + (msg.message || ""));
+        speakingMsg = null;
         stopGenerating();
         el.now.textContent = "–";
         showError(msg.message);

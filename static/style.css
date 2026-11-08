@@ -285,3 +285,23 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .workers-row select { width: auto; }
 .workers-row .wstate { color: var(--muted); font-size: 0.85em; min-width: 7rem; }
 .workers-note { color: var(--warn); font-size: 0.85em; margin: 0 0 0.3rem; }
+
+/* Statusfeld: aktuelle Aktion + die zwei davor (3 Zeilen) */
+.status-log {
+  height: 4.4em;
+  padding: 0.35rem 0.65rem;
+  margin-bottom: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.status-log .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); transition: opacity 0.4s; }
+.status-log .line:first-child { color: inherit; }
+.status-log .line:nth-child(2) { opacity: 0.6; }
+.status-log .line:nth-child(3) { opacity: 0.35; }
+.status-log .time { font-variant-numeric: tabular-nums; margin-right: 0.5em; opacity: 0.7; }
