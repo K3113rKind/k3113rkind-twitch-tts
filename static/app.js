@@ -12,7 +12,7 @@ const el = {
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
-  skip: $("skip"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
+  skip: $("skip"), pause: $("pause"), startstop: $("startstop"), audioUnlock: $("audio-unlock"),
   applyChannel: $("apply-channel"), applyVoice: $("apply-voice"), renameVoice: $("rename-voice"),
   hideVoice: $("hide-voice"), manageVoices: $("manage-voices"), voiceManager: $("voice-manager"),
   voiceFilter: $("voice-filter"), voiceGroups: $("voice-groups"),
@@ -229,6 +229,9 @@ function connectWs() {
       case "status":
         applyStatus(msg);
         break;
+      case "paused":
+        setPaused(msg.paused);
+        break;
       case "voices_changed":
         refreshStatus();
         loadCloneList();
@@ -250,6 +253,16 @@ let running = false;
 let speaking = false;
 function updateSkipButton() { el.skip.disabled = !running && !speaking; }
 
+let paused = false;
+function setPaused(p) {
+  paused = !!p;
+  el.pause.textContent = paused ? "▶ Weiter" : "⏸ Pause";
+  el.pause.classList.toggle("running", paused);
+  el.pause.title = paused
+    ? "Vorlesen fortsetzen – es geht an derselben Stelle weiter"
+    : "Vorlesen anhalten/fortsetzen – Chat und Testtext";
+}
+
 function applyStatus(s) {
   el.dot.className = "dot " + (s.connected ? "ok" : s.running ? "warn" : "");
   el.statusText.textContent = s.connected
@@ -259,6 +272,7 @@ function applyStatus(s) {
   el.startstop.textContent = s.running ? "Vorlesen stoppen" : "Vorlesen starten";
   el.startstop.classList.toggle("running", s.running);
   running = s.running;
+  if (typeof s.paused === "boolean") setPaused(s.paused);
   // Rückfall: "fertig" über die WebSocket verpasst (z. B. Verbindung kurz weg)
   if (testActive && s.test_active === false && Date.now() - testSince > 4000) endTestText();
   updateSkipButton();
@@ -446,6 +460,13 @@ for (const slider of [el.volume, el.speed, el.temperature]) {
 }
 
 el.skip.addEventListener("click", () => fetch("/api/skip", { method: "POST" }));
+el.pause.addEventListener("click", async () => {
+  const res = await fetch("/api/pause", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paused: !paused }),
+  }).catch(() => null);
+  if (res && res.ok) setPaused((await res.json()).paused);
+});
 
 /* Übernehmen-Knöpfe: erst die aktuelle Eingabe speichern (das normale
    change-Event könnte noch nicht gefeuert haben, wenn direkt aus dem Feld

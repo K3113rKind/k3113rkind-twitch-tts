@@ -108,6 +108,7 @@ def _status() -> dict:
         "test_active": speaker.test_active,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
+        "paused": audio_stream.paused,
         "last_perf": speaker.last_perf,
         "workers": tts.workers_state(),
     }
@@ -821,6 +822,17 @@ async def training_status():
 async def skip():
     speaker.skip()
     return {"ok": True}
+
+
+@app.post("/api/pause")
+async def pause(body: dict | None = None):
+    """Vorlesen anhalten/fortsetzen (Chat und Testtext). Ohne "paused" im
+    Körper wird umgeschaltet. Neue Nachrichten werden weiter angenommen und
+    vorab gerechnet; die Warteschlangen-Grenze gilt wie sonst."""
+    want = (body or {}).get("paused")
+    audio_stream.paused = (not audio_stream.paused) if want is None else bool(want)
+    await broadcaster.send({"type": "paused", "paused": audio_stream.paused})
+    return {"paused": audio_stream.paused}
 
 
 @app.websocket("/ws")
