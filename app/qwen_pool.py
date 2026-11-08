@@ -187,6 +187,9 @@ class QwenPool:
         self._waiting: list[tuple] = []  # (Priorität, Ticket, erlaubte Prozesse)
         self._ticket = 0
         self._started = False
+        # welches Modell (Qwen: Repo, Pocket: Sprache) jeder Prozess geladen hat
+        self._loaded: list = [None] * workers
+        self._recycling: set[int] = set()
 
     # ------------------------------------------------------------ Verwaltung
     def start(self) -> None:
@@ -267,8 +270,9 @@ class QwenPool:
             if self._closed:
                 return
             for i, p in enumerate(self._procs):
-                if p is None or p.is_alive():
+                if p is None or p.is_alive() or i in self._recycling:
                     continue
+                self._loaded[i] = None
                 log.error("%s-Rechenprozess %d beendet (Code %s) – wird neu gestartet",
                           self.engine, i + 1, p.exitcode)
                 for jid, (fut, wi) in list(self._futures.items()):
@@ -277,6 +281,29 @@ class QwenPool:
                         fut.set_exception(RuntimeError(
                             f"Rechenprozess {i + 1} abgestürzt (zu wenig Speicher?)"))
                 self._spawn(i)
+
+    def _recycle(self, i: int, new_model) -> None:
+        """Prozess i beenden und frisch starten (gehört gerade dem Aufrufer).
+        Nur so wird der Speicher eines entladenen Modells sicher frei – im
+        Prozess selbst behielten PyTorch/glibc ihn (Modellwechsel 1.7B -> 0.6B,
+        Pocket german -> 24L: RAM wuchs bei jedem Wechsel)."""
+        old_model = self._loaded[i]
+        p, q = self._procs[i], self._inqs[i]
+        try:
+            q.put(None)
+            p.join(timeout=10)
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=5)
+        except Exception as exc:
+            log.warning("%s-Rechenprozess %d ließ sich nicht sauber beenden: %s",
+                        self.engine, i + 1, exc)
+        with self._cond:
+            self._loaded[i] = None
+            self._spawn(i)
+            self._recycling.discard(i)
+        log.info("%s-Rechenprozess %d neu gestartet für Modellwechsel (%s -> %s), Speicher frei",
+                 self.engine, i + 1, old_model, new_model)
 
     def _rebalance(self) -> None:
         """Threads auf die gerade rechnenden Prozesse verteilen (unter _cond)."""
@@ -324,14 +351,26 @@ class QwenPool:
             finally:
                 self._waiting.remove(me)
                 self._cond.notify_all()
-            i = min(self._idle & allowed)
+            model = args.get("repo") or args.get("language")
+            free = self._idle & allowed
+            same = {w for w in free if self._loaded[w] == model}
+            # lieber einen Prozess, der das Modell schon hat; sonst einen leeren
+            empty = {w for w in free if self._loaded[w] is None}
+            i = min(same or empty or free)
             self._idle.discard(i)
+            recycle = model is not None and self._loaded[i] not in (None, model)
+            if recycle:
+                self._recycling.add(i)
             self._rebalance()
-            jid = self._next_id
-            self._next_id += 1
-            fut: Future = Future()
-            self._futures[jid] = (fut, i)
         try:
+            if recycle:
+                self._recycle(i, model)
+            with self._cond:
+                self._loaded[i] = model
+                jid = self._next_id
+                self._next_id += 1
+                fut: Future = Future()
+                self._futures[jid] = (fut, i)
             self._inqs[i].put((jid, dict(args)))
             return fut.result()
         finally:
