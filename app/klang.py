@@ -102,7 +102,17 @@ def _psola(samples: np.ndarray, sr: int, factor: float) -> np.ndarray | None:
     factor = max(0.34, min(2.9, factor))  # Praat: Faktor > 3 geht nicht
     snd = parselmouth.Sound(samples.astype(np.float64), sampling_frequency=float(sr))
     out = call(snd, "Lengthen (overlap-add)", 75, 600, factor)
-    return np.asarray(out.values[0], dtype=np.float32)
+    res = np.nan_to_num(np.asarray(out.values, dtype=np.float32).reshape(-1))
+    # Plausibilität: Länge ungefähr wie gewünscht, Pegel nicht verschwunden –
+    # sonst lieber unverändert als stumm/kaputt ausgeben
+    rms_in = float(np.sqrt(np.mean(samples ** 2))) if len(samples) else 0.0
+    rms_out = float(np.sqrt(np.mean(res ** 2))) if len(res) else 0.0
+    want = len(samples) * factor
+    if not len(res) or abs(len(res) - want) > 0.2 * want or (rms_in > 0 and rms_out < 0.2 * rms_in):
+        _warn_once("psola-check", "Tempo: PSOLA-Ergebnis unplausibel (Länge %d statt ~%d, Pegel %.4f "
+                   "statt %.4f) – Abschnitt ohne PSOLA", len(res), int(want), rms_out, rms_in)
+        return samples
+    return np.clip(res, -1.0, 1.0)
 
 
 def _atempo(samples: np.ndarray, sr: int, tempo: float) -> np.ndarray:
