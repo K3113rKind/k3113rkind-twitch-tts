@@ -39,10 +39,10 @@ RUN case "$TORCH_INDEX" in *cpu) ;; *) apt-get update \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+COPY docker/get-deno.py /tmp/get-deno.py
 RUN pip install --no-cache-dir python-multipart demucs faster-whisper "yt-dlp[default]" \
        --extra-index-url "$TORCH_INDEX" \
-    && python -c "import io, time, urllib.request, zipfile; url = 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip'; exec('for n in range(6):\n try:\n  data = urllib.request.urlopen(url, timeout=120).read(); break\n except Exception as e:\n  print(\'deno-Download fehlgeschlagen (%s), neuer Versuch in %d s\' % (e, 10 * (n + 1)), flush=True); time.sleep(10 * (n + 1))\nelse:\n raise SystemExit(\'deno nicht ladbar (GitHub)\')'); zipfile.ZipFile(io.BytesIO(data)).extract('deno', '/usr/local/bin')" \
-    && chmod +x /usr/local/bin/deno && deno --version | head -1 \
+    && python /tmp/get-deno.py && (deno --version 2>/dev/null | head -1 || true) \
     && python -c "import torch, demucs, faster_whisper; print('Torch nach Klon-Werkzeugen:', torch.__version__)"
 
 # Pocket TTS (Kyutai): kleines CPU-Modell mit Deutsch und Stimmklonen.
