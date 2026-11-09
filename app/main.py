@@ -326,9 +326,13 @@ async def _yt_dub(meta: dict, original_level: float) -> None:
 
     cfg = config.as_dict()
     voice = speaker._voice(cfg)
-    speed, temperature, instruct = speaker._gen_params(cfg)
-    clone_tempo = is_qwen(voice) and VOICES.get(voice, {}).get("engine") != "qwen" \
-        and abs(float(speed or 1.0) - 1.0) > 0.01
+    # Beim Vertonen bestimmt das Video das Tempo, nicht der Regler: jeder Satz
+    # wird in Normaltempo gerechnet und nur so weit beschleunigt, wie er in
+    # seine Lücke passen muss (youtube_dub.build_track) – ein Bearbeitungs-
+    # schritt statt zwei (Regler + Anpassung) und keine unnötig gedehnten Sätze.
+    _speed, temperature, instruct = speaker._gen_params({**cfg, "speed": 1.0})
+    speed = 1.0
+    clone_tempo = False
     sentences = meta["sentences"]
     n = len(sentences)
     _yt_say(f"Vertone {n} Sätze mit {VOICES.get(voice, {}).get('label', voice)} …")
