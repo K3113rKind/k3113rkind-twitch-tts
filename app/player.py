@@ -80,8 +80,18 @@ def _trim_silence(samples, sr: int, head: bool, tail: bool, keep_s: float = 0.05
 class Broadcaster:
     """Tracks connected WebSocket UIs and broadcasts JSON messages."""
 
+    # Diese Ereignisse merkt sich der Server und spielt sie neu verbundenen
+    # Oberflächen vor – nach Tab schließen/öffnen ist der aktuelle Stand
+    # (rechnet gerade, spricht gerade, Fortschritt, Statusfeld) sofort wieder da.
+    REPLAY_TYPES = ("generating", "speak", "progress", "done", "stop_audio", "paused")
+
     def __init__(self) -> None:
         self._clients: set = set()
+        self._recent: deque = deque(maxlen=12)
+
+    async def replay(self, ws) -> None:
+        for payload in list(self._recent):
+            await ws.send_json({**payload, "replay": True})
 
     def add(self, ws) -> None:
         self._clients.add(ws)
@@ -94,6 +104,13 @@ class Broadcaster:
         return len(self._clients)
 
     async def send(self, payload: dict) -> None:
+        kind = payload.get("type")
+        if kind == "generating":
+            payload = {**payload, "ts": int(time.time() * 1000)}
+        if kind in self.REPLAY_TYPES:
+            if kind == "progress" and self._recent and self._recent[-1].get("type") == "progress":
+                self._recent.pop()  # nur den neuesten Fortschritt merken
+            self._recent.append(payload)
         dead = []
         for ws in list(self._clients):
             try:

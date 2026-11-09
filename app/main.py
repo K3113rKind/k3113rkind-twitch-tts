@@ -428,7 +428,7 @@ async def youtube_job():
     if meta is not None and not meta.get("final"):
         meta = None  # nur fertig vertonte Videos anbieten
     return {"running": yt_job["running"], "log": list(yt_job["log"]), "error": yt_job["error"],
-            "meta": meta}
+            "meta": meta, "url": yt_job.get("url", "")}
 
 
 @app.get("/api/youtube/video")
@@ -1123,6 +1123,7 @@ async def websocket_endpoint(ws: WebSocket):
     broadcaster.add(ws)
     try:
         await ws.send_json({"type": "status", **_status()})
+        await broadcaster.replay(ws)  # aktueller Stand nach Tab neu öffnen
         while True:
             msg = await ws.receive_json()
             kind = msg.get("type")

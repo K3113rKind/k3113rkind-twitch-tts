@@ -55,6 +55,7 @@
     const res = await fetch("/api/youtube/job").catch(() => null);
     if (!res || !res.ok) return;
     const job = await res.json();
+    if (job.url && !ui.url.value) ui.url.value = job.url;  // nach Tab neu öffnen
     if (job.running) {
       ui.load.disabled = true;
       ui.eject.classList.remove("hidden");

@@ -168,7 +168,7 @@ function renderNowProgress() {
 function showGenerating(msg) {
   stopGenerating();
   progress = null;
-  const started = Date.now();
+  const started = msg.ts || Date.now();  // nach Tab neu öffnen: echte Startzeit vom Server
   actionSeq += 1;
   const key = "gen" + actionSeq;
   speakingMsg = null;
@@ -314,6 +314,8 @@ function applyStatus(s) {
   if (typeof s.paused === "boolean") setPaused(s.paused);
   // Rückfall: "fertig" über die WebSocket verpasst (z. B. Verbindung kurz weg)
   if (testActive && s.test_active === false && Date.now() - testSince > 4000) endTestText();
+  // Tab neu geöffnet, während ein Testtext läuft: Knöpfe wieder sperren
+  if (!testActive && s.test_active === true) { testActive = true; sayBusy = true; testSince = Date.now(); }
   updateSkipButton();
   updateSayButton();
   fillVoices(s.voices || []);
