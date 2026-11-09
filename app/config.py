@@ -133,7 +133,7 @@ class ConfigStore:
             elif key == "voice_pool":
                 if not isinstance(value, list):
                     continue
-                value = [str(v) for v in value if str(v) in VOICES][:12]
+                value = [str(v) for v in value if str(v) in VOICES or is_remote(str(v))][:12]
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":

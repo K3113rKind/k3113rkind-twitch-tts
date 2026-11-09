@@ -108,6 +108,6 @@ def preview_text(voice_key: str) -> str:
 
 
 def pool_voices(cfg: dict) -> list[str]:
-    """Stimmen-Wechsel im Chat: die ausgewählten lokalen Stimmen, die es gibt
-    (freigegebene Stimmen der Administrativen Instanz bleiben außen vor)."""
-    return [v for v in cfg.get("voice_pool") or [] if v in VOICES and is_available(v)]
+    """Stimmen-Wechsel im Chat: die ausgewählten Stimmen, die es gibt – lokale
+    und von der Administrativen Instanz freigegebene."""
+    return [v for v in cfg.get("voice_pool") or [] if is_available(v)]

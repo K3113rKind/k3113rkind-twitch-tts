@@ -197,12 +197,19 @@ function fillVoices(voices) {
 let poolSelected = [];
 let poolKeys = "";
 function renderVoicePool(voices) {
-  const local = voices.filter((v) => v.local);
-  const keys = local.map((v) => v.key).join(",");
-  if (!el.pool || keys === poolKeys) return;  // nur neu aufbauen, wenn sich die Liste ändert
-  poolKeys = keys;
+  // Aufklappliste mit Häkchen (mehrere Stimmen wählbar)
+  if (!el.pool) return;
+  const list = voices;
+  const keys = list.map((v) => v.key).join(",");
+  if (el.pool.dataset.keys === keys) { updatePoolButton(); return; }
+  el.pool.dataset.keys = keys;
   el.pool.innerHTML = "";
-  for (const v of local) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "multi-btn";
+  const panel = document.createElement("div");
+  panel.className = "multi-panel hidden";
+  for (const v of list) {
     const label = document.createElement("label");
     label.className = "check";
     const cb = document.createElement("input");
@@ -210,12 +217,25 @@ function renderVoicePool(voices) {
     cb.value = v.key;
     cb.checked = poolSelected.includes(v.key);
     cb.addEventListener("change", () => {
-      poolSelected = [...el.pool.querySelectorAll("input:checked")].map((x) => x.value);
+      poolSelected = [...panel.querySelectorAll("input:checked")].map((x) => x.value);
+      updatePoolButton();
       saveConfig();
     });
     label.append(cb, document.createTextNode(" " + v.label));
-    el.pool.append(label);
+    panel.append(label);
   }
+  btn.addEventListener("click", (ev) => { ev.stopPropagation(); panel.classList.toggle("hidden"); });
+  panel.addEventListener("click", (ev) => ev.stopPropagation());
+  document.addEventListener("click", () => panel.classList.add("hidden"));
+  el.pool.append(btn, panel);
+  updatePoolButton();
+}
+function updatePoolButton() {
+  const btn = el.pool && el.pool.querySelector(".multi-btn");
+  if (!btn) return;
+  const labels = [...el.pool.querySelectorAll("input:checked")].map((cb) => cb.parentElement.textContent.trim());
+  btn.textContent = (labels.length === 0 ? "Stimmen auswählen …"
+    : labels.length <= 2 ? labels.join(", ") : `${labels.length} Stimmen ausgewählt`) + "  ▾";
 }
 
 // Pause-Knopf
@@ -277,6 +297,7 @@ function applyConfig(c) {
   el.poolChat.checked = !!c.voice_pool_chat;
   poolSelected = Array.isArray(c.voice_pool) ? c.voice_pool : [];
   if (el.pool) el.pool.querySelectorAll("input").forEach((cb) => { cb.checked = poolSelected.includes(cb.value); });
+  updatePoolButton();
   el.keepaliveLevel.value = c.keepalive_level;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
