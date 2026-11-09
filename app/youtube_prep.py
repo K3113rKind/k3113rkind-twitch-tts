@@ -45,10 +45,13 @@ def ytdlp(*args: str, timeout: int = 3600) -> subprocess.CompletedProcess:
 
 
 # ------------------------------------------------------------------ Video
-def download_video(url: str, out: Path) -> Path:
-    step(f"Lade Video (höchstens {YT_HEIGHT}p) …")
-    fmt = (f"bv*[height<={YT_HEIGHT}][vcodec^=avc1]+ba[ext=m4a]/"
-           f"b[height<={YT_HEIGHT}][ext=mp4]/bv*[height<={YT_HEIGHT}]+ba/b")
+def download_video(url: str, out: Path, height: int = YT_HEIGHT) -> Path:
+    step(f"Lade Video (höchstens {height}p) …")
+    # H.264 bevorzugt (spielt überall); über 1080p gibt es bei YouTube meist
+    # nur VP9/AV1 – dann eben das (moderne Browser spielen es im MP4 ab)
+    fmt = (f"bv*[height<={height}][vcodec^=avc1]+ba[ext=m4a]/"
+           f"bv*[height<={height}]+ba[ext=m4a]/"
+           f"b[height<={height}][ext=mp4]/bv*[height<={height}]+ba/b")
     cmd = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--newline", "-f", fmt,
            "--merge-output-format", "mp4", "-o", str(out / "video.%(ext)s"), url]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -253,6 +256,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--height", type=int, default=YT_HEIGHT)
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -268,7 +272,7 @@ def main() -> None:
     auto = info.get("automatic_captions") or {}
     step(f"„{info.get('title', '')}“ – Original: {_lang_name(original)}")
 
-    video = download_video(args.url, out)
+    video = download_video(args.url, out, args.height)
 
     cues, text_lang, source = None, None, ""
     # a) echte deutsche Untertitel

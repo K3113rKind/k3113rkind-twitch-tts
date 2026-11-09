@@ -96,10 +96,18 @@
     <p id="say-hint" class="hint hidden">Gesperrt, solange der Chat vorgelesen wird – erst „Vorlesen stoppen“.</p>
   </section>
 
-  <details class="group" id="yt-section">
-    <summary>YouTube vorlesen <span class="muted">(Video laden, übersetzen und mit der eingestellten Stimme neu vertonen)</span></summary>
+  <section class="group" id="yt-section">
+    <label>YouTube vorlesen <span class="muted">(Video laden, übersetzen und mit der eingestellten Stimme neu vertonen)</span></label>
     <input id="yt-url" class="yt-url" type="url" placeholder="YouTube-Link einfügen …" autocomplete="off">
     <div class="actions">
+      <select id="yt-height" title="Höchste Auflösung, in der das Video geladen wird">
+        <option value="360">360p</option>
+        <option value="480">480p</option>
+        <option value="720" selected>720p</option>
+        <option value="1080">1080p</option>
+        <option value="1440">1440p</option>
+        <option value="2160">2160p (4K)</option>
+      </select>
       <select id="yt-orig" title="Originalton leise unter der deutschen Spur lassen (Musik, Geräusche)">
         <option value="0">Original: aus</option>
         <option value="0.1">Original: 10 %</option>
@@ -114,7 +122,7 @@
       <a id="yt-export" class="btn btn-secondary hidden" href="/api/youtube/export" download>⬇ Exportieren</a>
       <button id="yt-eject" type="button" class="btn-secondary hidden" title="Video samt Übersetzung verwerfen und vom Server löschen">⏏ Auswerfen</button>
     </div>
-  </details>
+  </section>
 
 
   <details class="group advanced">
@@ -283,6 +291,6 @@
   </details>
 </main>
 <script src="/static/app.js?v=49"></script>
-<script src="/static/youtube.js?v=3"></script>
+<script src="/static/youtube.js?v=4"></script>
 </body>
 </html>

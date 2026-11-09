@@ -278,12 +278,13 @@ def _yt_meta() -> dict | None:
         return None
 
 
-async def _run_yt(url: str, original_level: float = 0.0) -> None:
+async def _run_yt(url: str, original_level: float = 0.0, height: int = 720) -> None:
     env = {**os.environ, "HF_HUB_OFFLINE": "0", "PYTHONUNBUFFERED": "1"}
     last = ""
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.youtube_prep", "--url", url, "--out", str(YT_DIR),
+            "--height", str(height),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
             start_new_session=True,  # eigene Prozessgruppe: Auswerfen beendet auch yt-dlp/ffmpeg
         )
@@ -412,7 +413,12 @@ async def youtube_prepare(body: dict):
         level = 0.0
     yt_job.update(running=True, error=None, url=url)
     yt_job["log"].clear()
-    yt_job["task"] = asyncio.create_task(_run_yt(url, level))
+    try:
+        height = int(body.get("height", 720) or 720)
+    except (TypeError, ValueError):
+        height = 720
+    height = height if height in (360, 480, 720, 1080, 1440, 2160) else 720
+    yt_job["task"] = asyncio.create_task(_run_yt(url, level, height))
     return {"ok": True}
 
 

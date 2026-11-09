@@ -8,7 +8,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const ui = {
-    url: $("yt-url"), orig: $("yt-orig"), load: $("yt-load"), info: $("yt-info"),
+    url: $("yt-url"), orig: $("yt-orig"), height: $("yt-height"), load: $("yt-load"), info: $("yt-info"),
     wrap: $("yt-wrap"), video: $("yt-video"), exp: $("yt-export"), eject: $("yt-eject"),
   };
   if (!ui.load || !ui.video) return;
@@ -83,7 +83,8 @@
     hideVideo();
     ui.load.disabled = true;
     const res = await post("/api/youtube/prepare",
-                           { url, original_level: parseFloat(ui.orig.value) }).catch(() => null);
+                           { url, original_level: parseFloat(ui.orig.value),
+                             height: parseInt(ui.height.value, 10) }).catch(() => null);
     if (!res || !res.ok) {
       const body = res ? await res.json().catch(() => ({})) : {};
       showError(body.detail || "Laden fehlgeschlagen.");
@@ -99,6 +100,15 @@
     await post("/api/youtube/eject").catch(() => {});
     clearInterval(poll); poll = null;
     ui.load.disabled = false;
+  });
+
+  // Auflösung merken (nur in diesem Browser)
+  try {
+    const h = localStorage.getItem("yt-height");
+    if (h) ui.height.value = h;
+  } catch (e) { /* ohne Speicher eben Standard */ }
+  ui.height.addEventListener("change", () => {
+    try { localStorage.setItem("yt-height", ui.height.value); } catch (e) { /* egal */ }
   });
 
   // Beim Öffnen der Seite: läuft eine Vorbereitung oder liegt schon ein Video bereit?
