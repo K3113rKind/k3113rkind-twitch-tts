@@ -263,19 +263,103 @@ async def preview():
 
 
 # ------------------------------------------------------- YouTube vorlesen
-@app.post("/api/youtube/load")
-async def youtube_load(body: dict):
-    """Deutsche Untertitel eines Videos holen (echte, sonst YouTubes
-    automatische Übersetzung) und als Sätze mit Startzeit liefern."""
-    from . import youtube_subs
+# Ein Video zur Zeit: herunterladen (720p), Text besorgen und übersetzen
+# (app/youtube_prep.py als eigener Prozess), dann im Browser abspielen und
+# die deutschen Sätze passend zur Position vorlesen. "Auswerfen" löscht alles.
+YT_DIR = Path(os.environ.get("CONFIG_PATH", "/config/config.json")).parent / "youtube"
+yt_job: dict = {"running": False, "log": deque(maxlen=12), "error": None, "proc": None, "url": ""}
 
+
+def _yt_meta() -> dict | None:
+    try:
+        return json.loads((YT_DIR / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+async def _run_yt(url: str) -> None:
+    env = {**os.environ, "HF_HUB_OFFLINE": "0", "PYTHONUNBUFFERED": "1"}
+    last = ""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.youtube_prep", "--url", url, "--out", str(YT_DIR),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+            start_new_session=True,  # eigene Prozessgruppe: Auswerfen beendet auch yt-dlp/ffmpeg
+        )
+        yt_job["proc"] = proc
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").rstrip()
+            if not line:
+                continue
+            log.info("YouTube: %s", line)
+            if line.startswith("SCHRITT: "):
+                yt_job["log"].append(line[len("SCHRITT: "):])
+            elif not line.startswith("ERGEBNIS "):
+                last = line[-300:]
+        code = await proc.wait()
+        if code != 0 or _yt_meta() is None:
+            yt_job["error"] = last or f"Abbruch mit Code {code}"
+    except Exception as exc:
+        yt_job["error"] = str(exc)
+    finally:
+        yt_job["running"] = False
+        yt_job["proc"] = None
+
+
+def _yt_wipe() -> None:
+    shutil.rmtree(YT_DIR, ignore_errors=True)
+
+
+@app.post("/api/youtube/prepare")
+async def youtube_prepare(body: dict):
     url = str(body.get("url", "")).strip()
     if not url:
         raise HTTPException(400, "Bitte einen YouTube-Link eingeben.")
-    try:
-        return await asyncio.to_thread(youtube_subs.load, url)
-    except Exception as exc:
-        raise HTTPException(400, str(exc))
+    if yt_job["running"]:
+        raise HTTPException(409, "Es wird gerade schon ein Video vorbereitet.")
+    await speaker.cancel_test()
+    _yt_wipe()  # immer nur ein Video auf dem Server
+    YT_DIR.mkdir(parents=True, exist_ok=True)
+    yt_job.update(running=True, error=None, url=url)
+    yt_job["log"].clear()
+    asyncio.create_task(_run_yt(url))
+    return {"ok": True}
+
+
+@app.get("/api/youtube/job")
+async def youtube_job():
+    meta = None if yt_job["running"] else _yt_meta()
+    return {"running": yt_job["running"], "log": list(yt_job["log"]), "error": yt_job["error"],
+            "meta": meta}
+
+
+@app.get("/api/youtube/video")
+async def youtube_video():
+    meta = _yt_meta()
+    path = YT_DIR / (meta or {}).get("video", "video.mp4")
+    if meta is None or not path.is_file():
+        raise HTTPException(404, "Kein Video geladen.")
+    # FileResponse beherrscht Range-Anfragen -> Spulen im Browser
+    return FileResponse(path, media_type="video/mp4")
+
+
+@app.post("/api/youtube/eject")
+async def youtube_eject():
+    """Video samt Übersetzung verwerfen und vom Server löschen."""
+    proc = yt_job.get("proc")
+    if proc is not None:
+        import signal
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        await asyncio.sleep(0.3)
+    await speaker.cancel_test()
+    _yt_wipe()
+    yt_job.update(error=None)
+    yt_job["log"].clear()
+    return {"ok": True}
 
 
 @app.post("/api/youtube/say")

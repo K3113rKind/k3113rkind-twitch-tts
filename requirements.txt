@@ -31,3 +31,7 @@ lameenc>=1.8
 
 # Sprechtempo für eigene Qwen-Stimmen: Praat (PSOLA, "Lengthen (overlap-add)")
 praat-parselmouth>=0.4
+
+# YouTube vorlesen: lokale Übersetzung mit Opus-MT (Marian-Tokenizer)
+sentencepiece
+sacremoses

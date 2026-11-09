@@ -1,17 +1,18 @@
-/* YouTube vorlesen: deutsche Untertitel eines Videos mit der eingestellten
-   Stimme vorlesen – wie Chat-Nachrichten. Die Seite verfolgt die Position
-   des eingebetteten Players; erreicht das Video einen Satz, geht er in die
-   Warteschlange. Die nächsten Sätze werden vorab gerechnet.
+/* YouTube vorlesen: Der Server lädt das Video (höchstens 720p), besorgt den
+   Text (deutsche Untertitel, sonst Originalsprache bzw. Whisper) und
+   übersetzt lokal. Danach spielt das Video hier im Browser vom eigenen
+   Server; erreicht es einen Satz, geht er wie eine Chat-Nachricht in die
+   Warteschlange. "Auswerfen" löscht Video und Übersetzung vom Server.
    Nutzt aus app.js: ensureAudio(), showError(), hideError() und das
    Ereignis "tts-event" (WebSocket-Nachrichten). */
 (() => {
   const $ = (id) => document.getElementById(id);
   const ui = {
-    url: $("yt-url"), load: $("yt-load"), info: $("yt-info"), wrap: $("yt-wrap"),
-    controls: $("yt-controls"), vol: $("yt-vol"), volVal: $("yt-vol-val"),
-    mode: $("yt-mode"), state: $("yt-state"),
+    url: $("yt-url"), load: $("yt-load"), eject: $("yt-eject"), info: $("yt-info"),
+    wrap: $("yt-wrap"), video: $("yt-video"), controls: $("yt-controls"),
+    vol: $("yt-vol"), volVal: $("yt-vol-val"), mode: $("yt-mode"), state: $("yt-state"),
   };
-  if (!ui.load) return;
+  if (!ui.load || !ui.video) return;
 
   const TICK_MS = 250;
   const PREFETCH_EVERY_MS = 2000;
@@ -21,26 +22,20 @@
   const SKIP_BACKLOG = 2;    // Modus "überspringen": ab so vielen offenen nichts Neues
 
   const st = {
-    player: null, sentences: [], next: 0, timer: null,
-    lastT: 0, lastWall: 0, playing: false,
-    sent: 0, done: 0, ids: new Set(), autoPaused: false,
-    lastPrefetch: 0, blocked: false,
+    meta: null, sentences: [], next: 0, timer: null, poll: null,
+    sent: 0, done: 0, ids: new Set(), autoPaused: false, lastPrefetch: 0, blocked: false,
   };
+  const v = ui.video;
 
-  function setState(text) { ui.state.textContent = text; }
-
-  function backlog() { return Math.max(0, st.sent - st.done); }
-
-  async function post(url, body) {
-    return fetch(url, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
-    });
-  }
+  const setState = (t) => { ui.state.textContent = t; };
+  const backlog = () => Math.max(0, st.sent - st.done);
+  const post = (url, body) => fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+  });
 
   function resetQueue() {
     st.sent = 0; st.done = 0; st.ids.clear();
-    post("/api/youtube/clear");
+    post("/api/youtube/clear").catch(() => {});
   }
 
   function indexAt(t) {
@@ -68,83 +63,55 @@
   }
 
   function tick() {
-    const p = st.player;
-    if (!p || typeof p.getCurrentTime !== "function") return;
-    const t = p.getCurrentTime() || 0;
-    const now = Date.now();
-    // Gespult? (Position weicht deutlich von der erwarteten ab)
-    const expected = st.playing ? st.lastT + (now - st.lastWall) / 1000 * (p.getPlaybackRate() || 1) : st.lastT;
-    if (Math.abs(t - expected) > 2.5) {
-      resetQueue();
-      st.next = indexAt(t);
-      setState("Gespult – lese ab der neuen Stelle.");
-    }
-    st.lastT = t; st.lastWall = now;
-
-    if (st.playing || st.autoPaused) {
+    if (!st.sentences.length) return;
+    const t = v.currentTime || 0;
+    const running = !v.paused || st.autoPaused;
+    if (running) {
       while (st.next < st.sentences.length && st.sentences[st.next].t <= t) {
-        if (ui.mode.value === "skip" && backlog() >= SKIP_BACKLOG) {
-          st.next += 1;  // hinterher: diesen Satz auslassen
-          continue;
-        }
+        if (ui.mode.value === "skip" && backlog() >= SKIP_BACKLOG) { st.next += 1; continue; }
         send(st.sentences[st.next]);
         st.next += 1;
       }
     }
-    // Hinterher? Video kurz anhalten, bis die Stimme aufgeholt hat
     if (ui.mode.value === "pause") {
-      if (st.playing && !st.autoPaused && backlog() >= PAUSE_BACKLOG) {
+      if (!v.paused && !st.autoPaused && backlog() >= PAUSE_BACKLOG) {
         st.autoPaused = true;
-        p.pauseVideo();
+        v.pause();
         setState("Video wartet kurz, bis die Stimme aufgeholt hat …");
       } else if (st.autoPaused && backlog() <= RESUME_BACKLOG) {
         st.autoPaused = false;
-        p.playVideo();
+        v.play().catch(() => {});
       }
     }
-    if (now - st.lastPrefetch > PREFETCH_EVERY_MS && (st.playing || st.autoPaused)) {
+    const now = Date.now();
+    if (running && now - st.lastPrefetch > PREFETCH_EVERY_MS) {
       st.lastPrefetch = now;
       prefetch();
     }
-    if (st.playing) {
+    if (!v.paused) {
       setState(`Satz ${Math.min(st.next, st.sentences.length)} von ${st.sentences.length}` +
                (backlog() ? ` · ${backlog()} in der Warteschlange` : ""));
     }
   }
 
-  function onStateChange(ev) {
-    const S = window.YT.PlayerState;
-    if (ev.data === S.PLAYING) {
-      st.playing = true;
-      st.lastT = st.player.getCurrentTime() || 0; st.lastWall = Date.now();
-      post("/api/pause", { paused: false });
-      if (!st.timer) st.timer = setInterval(tick, TICK_MS);
-    } else if (ev.data === S.PAUSED) {
-      st.playing = false;
-      if (!st.autoPaused) {  // vom Nutzer pausiert -> Vorlesen auch anhalten
-        post("/api/pause", { paused: true });
-        setState("Pausiert.");
-      }
-    } else if (ev.data === S.ENDED) {
-      st.playing = false;
-      setState("Video zu Ende.");
+  v.addEventListener("play", () => {
+    ensureAudio();
+    post("/api/pause", { paused: false }).catch(() => {});
+    if (!st.timer) st.timer = setInterval(tick, TICK_MS);
+  });
+  v.addEventListener("pause", () => {
+    if (!st.autoPaused) {  // vom Nutzer pausiert -> Vorlesen auch anhalten
+      post("/api/pause", { paused: true }).catch(() => {});
+      setState("Pausiert.");
     }
-  }
-
-  // YouTube-IFrame-API einmalig nachladen
-  let apiReady = null;
-  function loadApi() {
-    if (apiReady) return apiReady;
-    apiReady = new Promise((resolve) => {
-      if (window.YT && window.YT.Player) { resolve(); return; }
-      const prev = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(); };
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.head.append(tag);
-    });
-    return apiReady;
-  }
+  });
+  v.addEventListener("seeking", () => {
+    resetQueue();
+    st.autoPaused = false;
+    st.next = indexAt(v.currentTime || 0);
+    setState("Gespult – lese ab der neuen Stelle.");
+  });
+  v.addEventListener("ended", () => setState("Video zu Ende."));
 
   function fmtDur(s) {
     if (!s) return "";
@@ -152,54 +119,87 @@
     return ` · ${m}:${String(sec).padStart(2, "0")} min`;
   }
 
+  function showVideo(meta) {
+    st.meta = meta;
+    st.sentences = meta.sentences || [];
+    st.next = 0; st.autoPaused = false; st.blocked = false;
+    resetQueue();
+    ui.info.classList.remove("hidden");
+    ui.info.textContent = `${meta.title}` + (meta.channel ? ` – ${meta.channel}` : "") +
+      fmtDur(meta.duration) + ` · Original: ${meta.language} · ${meta.source} · ${st.sentences.length} Sätze`;
+    v.src = `/api/youtube/video?id=${encodeURIComponent(meta.id || "")}`;
+    v.volume = parseInt(ui.vol.value, 10) / 100;
+    ui.wrap.classList.remove("hidden");
+    ui.controls.classList.remove("hidden");
+    ui.eject.classList.remove("hidden");
+    setState("Bereit – Video starten.");
+    prefetch();  // erste Sätze schon vorbereiten
+  }
+
+  function hideVideo() {
+    v.pause();
+    v.removeAttribute("src");
+    v.load();
+    st.meta = null; st.sentences = []; st.next = 0;
+    ui.wrap.classList.add("hidden");
+    ui.controls.classList.add("hidden");
+    ui.eject.classList.add("hidden");
+    ui.info.classList.add("hidden");
+    ui.info.textContent = "";
+  }
+
+  async function pollJob() {
+    const res = await fetch("/api/youtube/job").catch(() => null);
+    if (!res || !res.ok) return;
+    const job = await res.json();
+    if (job.running) {
+      ui.load.disabled = true;
+      ui.eject.classList.remove("hidden");
+      ui.info.classList.remove("hidden");
+      ui.info.textContent = (job.log && job.log.length ? job.log[job.log.length - 1] : "Starte …");
+      return;
+    }
+    clearInterval(st.poll); st.poll = null;
+    ui.load.disabled = false;
+    if (job.error) {
+      ui.info.classList.add("hidden");
+      ui.eject.classList.add("hidden");
+      showError(job.error);
+    } else if (job.meta && (!st.meta || st.meta.id !== job.meta.id)) {
+      hideError();
+      showVideo(job.meta);
+    }
+  }
+
   ui.load.addEventListener("click", async () => {
     const url = ui.url.value.trim();
     if (!url) { ui.url.focus(); return; }
     ensureAudio();  // Nutzer-Geste: Ton im Browser freischalten
+    hideVideo();
     ui.load.disabled = true;
-    ui.info.classList.remove("hidden");
-    ui.info.textContent = "Lade Untertitel …";
-    try {
-      const res = await post("/api/youtube/load", { url });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || res.statusText);
-      hideError();
-      st.sentences = data.sentences || [];
-      st.next = 0; st.blocked = false; st.autoPaused = false;
-      resetQueue();
-      ui.info.textContent = `${data.title}` + (data.channel ? ` – ${data.channel}` : "") +
-        fmtDur(data.duration) + ` · Original: ${data.language} · ${data.source} · ${st.sentences.length} Sätze`;
-      await loadApi();
-      ui.wrap.classList.remove("hidden");
-      ui.controls.classList.remove("hidden");
-      if (st.player) {
-        st.player.loadVideoById(data.id);
-        st.player.setVolume(parseInt(ui.vol.value, 10));
-      } else {
-        st.player = new window.YT.Player("yt-player", {
-          host: "https://www.youtube-nocookie.com",
-          videoId: data.id,
-          playerVars: { playsinline: 1, rel: 0, cc_load_policy: 0 },
-          events: {
-            onReady: () => st.player.setVolume(parseInt(ui.vol.value, 10)),
-            onStateChange,
-          },
-        });
-      }
-      prefetch();  // erste Sätze schon vorbereiten
-      setState("Bereit – Video starten.");
-    } catch (e) {
-      ui.info.textContent = "";
-      ui.info.classList.add("hidden");
-      showError(String(e.message || e));
-    } finally {
+    const res = await post("/api/youtube/prepare", { url }).catch(() => null);
+    if (!res || !res.ok) {
+      const body = res ? await res.json().catch(() => ({})) : {};
+      showError(body.detail || "Laden fehlgeschlagen.");
       ui.load.disabled = false;
+      return;
     }
+    hideError();
+    if (!st.poll) st.poll = setInterval(pollJob, 1000);
+    pollJob();
+  });
+
+  ui.eject.addEventListener("click", async () => {
+    hideVideo();
+    await post("/api/youtube/eject").catch(() => {});
+    clearInterval(st.poll); st.poll = null;
+    ui.load.disabled = false;
+    setState("");
   });
 
   ui.vol.addEventListener("input", () => {
     ui.volVal.textContent = `${ui.vol.value} %`;
-    if (st.player && st.player.setVolume) st.player.setVolume(parseInt(ui.vol.value, 10));
+    v.volume = parseInt(ui.vol.value, 10) / 100;
   });
 
   // Fertig gesprochene YouTube-Sätze zählen (für "hinterher?")
@@ -207,9 +207,10 @@
     const m = ev.detail || {};
     if (m.type === "speak" && m.username === "YouTube") st.ids.add(m.id);
     else if (m.type === "done" && st.ids.has(m.id)) { st.ids.delete(m.id); st.done += 1; }
-    else if (m.type === "stop_audio" || m.type === "error") {
-      // abgebrochen/Fehler: offene Sätze nicht mehr mitzählen
-      st.done = st.sent; st.ids.clear();
-    }
+    else if (m.type === "stop_audio" || m.type === "error") { st.done = st.sent; st.ids.clear(); }
   });
+
+  // Beim Öffnen der Seite: läuft eine Vorbereitung oder liegt schon ein Video bereit?
+  st.poll = setInterval(pollJob, 1000);
+  pollJob();
 })();
