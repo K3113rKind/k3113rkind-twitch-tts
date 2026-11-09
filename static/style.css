@@ -316,3 +316,6 @@ a.btn-secondary { flex: 1; padding: 0.65rem 0.9rem; border-radius: 6px; font-wei
 a.btn-secondary.hidden { display: none; }
 #yt-section .actions { margin-top: 0.5rem; }
 #yt-section .actions select, #yt-section .actions button { flex: 1; min-width: 0; }
+
+.voice-pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.2rem 0.8rem; margin-top: 0.4rem; }
+.voice-pool label { font-size: 0.85rem; margin: 0; }

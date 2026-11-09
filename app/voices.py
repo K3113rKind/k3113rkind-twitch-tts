@@ -479,3 +479,10 @@ PREVIEW_TEXT = {
 def preview_text(voice_key: str) -> str:
     lang = VOICES.get(voice_key, VOICES[DEFAULT_VOICE]).get("lang", "d")
     return PREVIEW_TEXT["d"] if lang == "d" else PREVIEW_TEXT["en"]
+
+
+def pool_voices(cfg: dict) -> list[str]:
+    """Stimmen-Wechsel: die ausgewählten Stimmen, die es gibt – nur Kokoro
+    und Pocket (Qwen würde bei jedem Wechsel Modelle umladen)."""
+    return [v for v in cfg.get("voice_pool") or []
+            if v in VOICES and is_available(v) and not is_qwen(v)]

@@ -104,12 +104,13 @@ def _sentences(cues: list[tuple[float, float, str]]) -> list[dict]:
     cur: list[str] = []
     start = None
     prev_end = None
+    speaker = 0  # Sprecherwechsel: YouTube markiert ihn mit ">>", Dialoge mit "- "
 
     def flush():
         nonlocal cur, start
         text = re.sub(r"\s+", " ", " ".join(cur)).strip()
         if text and re.search(r"\w", text):
-            out.append({"t": round(start or 0.0, 2), "text": text})
+            out.append({"t": round(start or 0.0, 2), "text": text, "sp": speaker})
         cur, start = [], None
 
     for a, b, text in cues:
@@ -118,7 +119,19 @@ def _sentences(cues: list[tuple[float, float, str]]) -> list[dict]:
             continue
         if cur and prev_end is not None and a - prev_end > GAP_SPLIT_S:
             flush()
+        if re.match(r"\s*-\s+\S", text):  # Dialog-Strich am Zeilenanfang
+            if cur:
+                flush()
+            speaker += 1
+            text = re.sub(r"^\s*-\s+", "", text)
         for word in text.split():
+            if word.startswith(">>"):  # Sprecherwechsel mitten im Häppchen
+                if cur:
+                    flush()
+                speaker += 1
+                word = word[2:]
+                if not word:
+                    continue
             if start is None:
                 start = a
             cur.append(word)

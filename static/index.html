@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=32">
+<link rel="stylesheet" href="/static/style.css?v=33">
 </head>
 <body>
 <main class="panel">
@@ -145,6 +145,20 @@
     </div>
 
     <div class="sub">
+    <h3>Stimmen-Wechsel</h3>
+    <label class="check">
+      <input id="voice_pool_chat" type="checkbox">
+      Im Chat: jeder Name bekommt fest eine Stimme aus der Auswahl
+    </label>
+    <label class="check">
+      <input id="voice_pool_youtube" type="checkbox">
+      Bei YouTube: bei erkanntem Sprecherwechsel die Stimme wechseln
+    </label>
+    <div id="voice-pool" class="voice-pool"></div>
+    <p class="hint">Nur Kokoro- und Pocket-Stimmen (Qwen würde bei jedem Wechsel Modelle umladen). Ist nichts ausgewählt, gilt die normale Stimme.</p>
+    </div>
+
+    <div class="sub">
     <h3>Wiedergabe und Chat</h3>
     <label>Lautstärke <output id="volume-val">100&nbsp;%</output>
       <input id="volume" type="range" min="0" max="2" step="0.05" value="1">
@@ -264,7 +278,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=46"></script>
+<script src="/static/app.js?v=47"></script>
 <script src="/static/youtube.js?v=3"></script>
 </body>
 </html>

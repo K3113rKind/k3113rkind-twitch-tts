@@ -37,6 +37,11 @@ DEFAULTS: dict[str, Any] = {
     "keep_speakers_awake": True,
     # alle Stimmen/Engines auf einheitliche Lautstärke bringen (klang.normalize_loudness)
     "loudness_norm": True,
+    # Stimmen-Wechsel: kleine Auswahl (Kokoro/Pocket), Chat bekommt je Name
+    # fest eine davon, YouTube wechselt bei erkanntem Sprecherwechsel
+    "voice_pool": [],
+    "voice_pool_chat": False,
+    "voice_pool_youtube": False,
     # Pegel des durchgehenden Hintergrundtons. Zweck: Der Browser stuft den
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
@@ -164,7 +169,8 @@ class ConfigStore:
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
-                         "keep_speakers_awake", "loudness_norm"):
+                         "keep_speakers_awake", "loudness_norm", "voice_pool_chat",
+                         "voice_pool_youtube"):
                 value = bool(value)
             elif key == "voice_labels":
                 if not isinstance(value, dict):
@@ -184,6 +190,10 @@ class ConfigStore:
                 value = str(value).strip().rstrip("/")
                 if value and not value.startswith(("http://", "https://")):
                     value = "http://" + value
+            elif key == "voice_pool":
+                if not isinstance(value, list):
+                    continue
+                value = [str(v) for v in value][:12]
             elif key in ("shared_voices", "shared_published"):
                 if not isinstance(value, list):
                     continue

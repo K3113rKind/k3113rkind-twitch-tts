@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import io
 import json
@@ -27,7 +28,7 @@ from .player import PAUSE_BETWEEN_CHUNKS_S, Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import (DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
+from .voices import (pool_voices, DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
                      is_available, is_pocket, is_qwen, needs_download, ref_dir, sync_clone_voices,
                      display_name, preview_text, speed_instruct, voice_catalog)
 
@@ -335,17 +336,33 @@ async def _yt_dub(meta: dict, original_level: float) -> None:
     clone_tempo = False
     sentences = meta["sentences"]
     n = len(sentences)
+    # Stimmen-Wechsel bei erkannten Sprecherwechseln (">>" in den Untertiteln)
+    pool = pool_voices(cfg) if cfg.get("voice_pool_youtube") else []
+    speakers = len({s.get("sp", 0) for s in sentences})
+    if pool and speakers > 1:
+        _yt_say(f"{speakers} Sprecherwechsel-Abschnitte erkannt – wechsle zwischen {len(pool)} Stimmen")
+    else:
+        pool = []
+
+    def voice_of(i: int) -> str:
+        return pool[sentences[i].get("sp", 0) % len(pool)] if pool else voice
     _yt_say(f"Vertone {n} Sätze mit {VOICES.get(voice, {}).get('label', voice)} …")
     base = time.monotonic() + 7200  # Chat und Testtexte gehen immer vor
     sem = asyncio.Semaphore(max(2, tts.workers_for(voice) * 2))
+    serial = asyncio.Lock()
     audios: list = [None] * n
     done = 0
 
     async def one(i: int) -> None:
         nonlocal done
+        v = voice_of(i)
+        # Engines ohne eigene Rechenprozesse (Kokoro) laufen im Hauptprozess:
+        # dort nacheinander statt gleichzeitig
+        lock = serial if not tts.parallel(v) else contextlib.nullcontext()
         async with sem:
-            r = await asyncio.to_thread(with_priority, (base, i), tts.synthesize,
-                                        sentences[i]["text"], voice, speed, temperature, instruct)
+            async with lock:
+                r = await asyncio.to_thread(with_priority, (base, i), tts.synthesize,
+                                            sentences[i]["text"], v, speed, temperature, instruct)
         samples = r.samples
         if clone_tempo:
             samples = await asyncio.to_thread(klang.apply_tempo, samples, r.sample_rate, speed,

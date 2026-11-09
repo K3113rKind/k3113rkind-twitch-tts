@@ -12,6 +12,7 @@ carries status/text for the UI, no audio.
 from __future__ import annotations
 
 import asyncio
+import zlib
 import os
 import logging
 import time
@@ -25,7 +26,7 @@ from .stream import AudioStream
 from .qwen_pool import with_priority
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
 from . import klang
-from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen
+from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen, pool_voices
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
 PAUSE_BETWEEN_CHUNKS_S = 0.25
@@ -51,6 +52,7 @@ class QueuedMessage:
     # Testtext: wie viele Abschnitte vor dem Start fertig sein müssen
     # (0 = direkt, 1–6, -1 = komplett; None = alte Automatik)
     prebuffer: int | None = None
+    voice: str | None = None  # feste Stimme für diese Nachricht (sonst Einstellung)
 
 
 def _trim_silence(samples, sr: int, head: bool, tail: bool, keep_s: float = 0.05):
@@ -282,16 +284,17 @@ class ChatSpeaker:
         trotzdem immer nur eine Nachricht nach der anderen."""
         cfg = self.config.as_dict()
         try:
-            voice = self._voice(cfg)
+            voices = {id(m): self._voice_for(m, cfg) for m in self._queue}
         except RuntimeError:
             return self._queue[0]
-        if not self.tts.parallel(voice):
+        if not all(self.tts.parallel(v) for v in voices.values()):
             return self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
         # Nur Nachrichten, deren Anfang komplett fertig ist – bei abgetrennter
         # Namensansage Name UND erster Textabschnitt. "X sagt:" startet also
         # nie vor dem Text, sonst entsteht eine unnatürliche Lücke.
         for m in self._queue:
+            voice = voices[id(m)]
             chunks = self._message_chunks(m, cfg, voice)
             head = chunks[:2] if self._is_name_chunk(chunks[0], m) and len(chunks) > 1 else chunks[:1]
             if all(self.tts.has_result(t, voice, temperature, instruct) for t in head):
@@ -358,6 +361,18 @@ class ChatSpeaker:
                 )
             voice = usable[0]["key"]
         return voice
+
+    def _voice_for(self, msg: QueuedMessage, cfg) -> str:
+        """Stimme einer Nachricht: feste Stimme der Nachricht, sonst bei
+        aktivem Stimmen-Wechsel je Chat-Name fest eine aus der Auswahl,
+        sonst die eingestellte."""
+        if msg.voice and is_available(msg.voice):
+            return msg.voice
+        if not msg.raw and cfg.get("voice_pool_chat"):
+            pool = pool_voices(cfg)
+            if pool:
+                return pool[zlib.crc32(msg.username.lower().encode()) % len(pool)]
+        return self._voice(cfg)
 
     @staticmethod
     def _spoken_text(msg: QueuedMessage, cfg, voice: str) -> str:
@@ -427,22 +442,27 @@ class ChatSpeaker:
             return
         cfg = self.config.as_dict()
         try:
-            voice = self._voice(cfg)
+            self._voice(cfg)
         except RuntimeError:
-            return
-        if not self.tts.parallel(voice):
-            return
-        free = self.tts.workers_for(voice) - len(self._prefetch_tasks)
-        if free <= 0:
             return
         # Kurze Nachrichten zuerst (schnell hörbar), sonst der Reihe nach.
         # Gespielt wird später die älteste fertige.
-        candidates = [(m, self._message_chunks(m, cfg, voice))
-                      for m in self._queue if not m.batched]
+        candidates = []
+        for m in self._queue:
+            if m.batched:
+                continue
+            mv = self._voice_for(m, cfg)
+            if self.tts.parallel(mv):  # Kokoro & Co. rechnen beim Abspielen
+                candidates.append((m, self._message_chunks(m, cfg, mv), mv))
         # stabil sortiert: innerhalb von kurz/lang bleibt die Reihenfolge
+        if not candidates:
+            return
+        free = max(self.tts.workers_for(c[2]) for c in candidates) - len(self._prefetch_tasks)
+        if free <= 0:
+            return
         candidates.sort(key=lambda c: len(c[0].text) > SHORT_CHARS)
         _, temperature, instruct = self._gen_params(cfg)
-        for m, chunks in candidates:
+        for m, chunks, voice in candidates:
             if free <= 0:
                 break
             m.batched = True
@@ -469,7 +489,7 @@ class ChatSpeaker:
 
     async def _speak_inner(self, msg: QueuedMessage) -> None:
         cfg = self.config.as_dict()
-        voice = self._voice(cfg)
+        voice = self._voice_for(msg, cfg)
         # Qwen-Texte abschnittsweise: Der erste Abschnitt wird schon gespielt,
         # während die nächsten im Hintergrund rechnen – lange Texte starten so
         # nach Sekunden statt erst nach der kompletten Berechnung. Kokoro ist

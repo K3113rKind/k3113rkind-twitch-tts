@@ -9,6 +9,7 @@ const el = {
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
   keepAwake: $("keep_speakers_awake"), loudness: $("loudness_norm"),
+  poolChat: $("voice_pool_chat"), poolYt: $("voice_pool_youtube"), pool: $("voice-pool"),
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
@@ -346,6 +347,28 @@ function fillVoices(voices) {
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
   updateTemperatureRow();
+  renderVoicePool(voices);
+}
+
+// Stimmen-Wechsel: Auswahl aus Kokoro- und Pocket-Stimmen
+let poolSelected = [];
+function renderVoicePool(voices) {
+  if (!el.pool) return;
+  el.pool.innerHTML = "";
+  for (const v of voices.filter((x) => !x.qwen)) {
+    const label = document.createElement("label");
+    label.className = "check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = v.key;
+    cb.checked = poolSelected.includes(v.key);
+    cb.addEventListener("change", () => {
+      poolSelected = [...el.pool.querySelectorAll("input:checked")].map((x) => x.value);
+      saveConfig();
+    });
+    label.append(cb, document.createTextNode(" " + v.label));
+    el.pool.append(label);
+  }
 }
 
 // Betonungs-Regler nur bei Qwen-Stimmen zeigen
@@ -403,6 +426,9 @@ function collectConfig() {
     read_smileys: el.readSmileys.checked,
     keep_speakers_awake: el.keepAwake.checked,
     loudness_norm: el.loudness.checked,
+    voice_pool_chat: el.poolChat.checked,
+    voice_pool_youtube: el.poolYt.checked,
+    voice_pool: poolSelected,
     keepalive_level: parseFloat(el.keepaliveLevel.value),
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
@@ -438,6 +464,10 @@ function applyConfig(c) {
   el.readSmileys.checked = c.read_smileys;
   el.keepAwake.checked = c.keep_speakers_awake;
   el.loudness.checked = c.loudness_norm !== false;
+  el.poolChat.checked = !!c.voice_pool_chat;
+  el.poolYt.checked = !!c.voice_pool_youtube;
+  poolSelected = Array.isArray(c.voice_pool) ? c.voice_pool : [];
+  if (el.pool) el.pool.querySelectorAll("input").forEach((cb) => { cb.checked = poolSelected.includes(cb.value); });
   el.keepaliveLevel.value = c.keepalive_level;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
@@ -467,7 +497,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.poolChat, el.poolYt, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => {

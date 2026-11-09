@@ -61,3 +61,13 @@ def test_loudness_equalizes_levels():
     ra, rb = (float(np.sqrt(np.mean(v ** 2))) for v in (a, b))
     assert abs(20 * np.log10(ra / rb)) < 1.0
     assert np.max(np.abs(b)) <= 0.9
+
+
+def test_speaker_changes_from_markers():
+    ev = {"events": [
+        {"tStartMs": 0, "dDurationMs": 2000, "segs": [{"utf8": ">> Hello there, how are"}]},
+        {"tStartMs": 2000, "dDurationMs": 2000, "segs": [{"utf8": "you? >> I am fine."}]},
+    ]}
+    s = youtube_subs._sentences(youtube_subs._cues_json3(json.dumps(ev)))
+    assert [x["text"] for x in s] == ["Hello there, how are you?", "I am fine."]
+    assert s[0]["sp"] != s[1]["sp"]
