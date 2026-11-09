@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=35">
+<link rel="stylesheet" href="/static/style.css?v=36">
 </head>
 <body>
 <main class="panel">
@@ -100,6 +100,10 @@
   <section class="group" id="yt-section">
     <label>YouTube vorlesen <span class="muted">(Video laden, übersetzen und mit der eingestellten Stimme neu vertonen)</span></label>
     <input id="yt-url" class="yt-url" type="url" placeholder="YouTube-Link einfügen …" autocomplete="off">
+    <div class="actions yt-times">
+      <input id="yt-start" type="text" inputmode="numeric" placeholder="Start (z. B. 1:30) – leer = Anfang" autocomplete="off">
+      <input id="yt-end" type="text" inputmode="numeric" placeholder="Ende (z. B. 4:15) – leer = Schluss" autocomplete="off">
+    </div>
     <div class="actions">
       <select id="yt-height" title="Höchste Auflösung, in der das Video geladen wird">
         <option value="360">360p</option>
@@ -292,6 +296,6 @@
   </details>
 </main>
 <script src="/static/app.js?v=51"></script>
-<script src="/static/youtube.js?v=5"></script>
+<script src="/static/youtube.js?v=6"></script>
 </body>
 </html>

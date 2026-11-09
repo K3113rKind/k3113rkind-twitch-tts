@@ -278,13 +278,16 @@ def _yt_meta() -> dict | None:
         return None
 
 
-async def _run_yt(url: str, original_level: float = 0.0, height: int = 720) -> None:
+async def _run_yt(url: str, original_level: float = 0.0, height: int = 720,
+                  start: float | None = None, end: float | None = None) -> None:
     env = {**os.environ, "HF_HUB_OFFLINE": "0", "PYTHONUNBUFFERED": "1"}
     last = ""
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.youtube_prep", "--url", url, "--out", str(YT_DIR),
             "--height", str(height),
+            *(["--start", str(start)] if start is not None else []),
+            *(["--end", str(end)] if end is not None else []),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
             start_new_session=True,  # eigene Prozessgruppe: Auswerfen beendet auch yt-dlp/ffmpeg
         )
@@ -393,6 +396,23 @@ async def _yt_dub(meta: dict, original_level: float) -> None:
             f"höchstens {stats['max_delay']:.1f} s Versatz")
 
 
+def _yt_time(value) -> float | None:
+    """'1:23', '01:02:03', '83' oder '83.5' -> Sekunden; leer -> None."""
+    text = str(value or "").strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        parts = [float(p) for p in text.split(":")]
+    except ValueError:
+        raise HTTPException(400, f"Zeit „{text}“ nicht lesbar – bitte z. B. 1:30 oder 1:02:30.")
+    if len(parts) > 3 or any(p < 0 for p in parts):
+        raise HTTPException(400, f"Zeit „{text}“ nicht lesbar – bitte z. B. 1:30 oder 1:02:30.")
+    sec = 0.0
+    for p in parts:
+        sec = sec * 60 + p
+    return sec
+
+
 def _yt_wipe() -> None:
     shutil.rmtree(YT_DIR, ignore_errors=True)
 
@@ -404,21 +424,25 @@ async def youtube_prepare(body: dict):
         raise HTTPException(400, "Bitte einen YouTube-Link eingeben.")
     if yt_job["running"]:
         raise HTTPException(409, "Es wird gerade schon ein Video vorbereitet.")
-    await speaker.cancel_test()
-    _yt_wipe()  # immer nur ein Video auf dem Server
-    YT_DIR.mkdir(parents=True, exist_ok=True)
+    # erst alle Eingaben prüfen, dann erst Altes löschen und starten
     try:
         level = max(0.0, min(0.5, float(body.get("original_level", 0) or 0)))
     except (TypeError, ValueError):
         level = 0.0
-    yt_job.update(running=True, error=None, url=url)
-    yt_job["log"].clear()
     try:
         height = int(body.get("height", 720) or 720)
     except (TypeError, ValueError):
         height = 720
     height = height if height in (360, 480, 720, 1080, 1440, 2160) else 720
-    yt_job["task"] = asyncio.create_task(_run_yt(url, level, height))
+    start, end = _yt_time(body.get("start")), _yt_time(body.get("end"))
+    if start is not None and end is not None and end <= start:
+        raise HTTPException(400, "Die Endzeit muss nach der Startzeit liegen.")
+    await speaker.cancel_test()
+    _yt_wipe()  # immer nur ein Video auf dem Server
+    YT_DIR.mkdir(parents=True, exist_ok=True)
+    yt_job.update(running=True, error=None, url=url)
+    yt_job["log"].clear()
+    yt_job["task"] = asyncio.create_task(_run_yt(url, level, height, start, end))
     return {"ok": True}
 
 

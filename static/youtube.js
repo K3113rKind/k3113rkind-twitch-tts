@@ -8,7 +8,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const ui = {
-    url: $("yt-url"), orig: $("yt-orig"), height: $("yt-height"), load: $("yt-load"), info: $("yt-info"),
+    url: $("yt-url"), orig: $("yt-orig"), height: $("yt-height"),
+    start: $("yt-start"), end: $("yt-end"), load: $("yt-load"), info: $("yt-info"),
     wrap: $("yt-wrap"), video: $("yt-video"), exp: $("yt-export"), eject: $("yt-eject"),
   };
   if (!ui.load || !ui.video) return;
@@ -85,7 +86,8 @@
     ui.load.disabled = true;
     const res = await post("/api/youtube/prepare",
                            { url, original_level: parseFloat(ui.orig.value),
-                             height: parseInt(ui.height.value, 10) }).catch(() => null);
+                             height: parseInt(ui.height.value, 10),
+                             start: ui.start.value.trim(), end: ui.end.value.trim() }).catch(() => null);
     if (!res || !res.ok) {
       const body = res ? await res.json().catch(() => ({})) : {};
       showError(body.detail || "Laden fehlgeschlagen.");

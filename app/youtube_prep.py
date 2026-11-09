@@ -45,14 +45,30 @@ def ytdlp(*args: str, timeout: int = 3600) -> subprocess.CompletedProcess:
 
 
 # ------------------------------------------------------------------ Video
-def download_video(url: str, out: Path, height: int = YT_HEIGHT) -> Path:
-    step(f"Lade Video (höchstens {height}p) …")
+def _hms(sec: float) -> str:
+    sec = int(round(sec))
+    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
+
+
+def download_video(url: str, out: Path, height: int = YT_HEIGHT,
+                   start: float | None = None, end: float | None = None) -> Path:
+    part = ""
+    if start is not None or end is not None:
+        part = f", Ausschnitt {_hms(start or 0)}–{_hms(end) if end else 'Ende'}"
+    step(f"Lade Video (höchstens {height}p{part}) …")
     # H.264 bevorzugt (spielt überall); über 1080p gibt es bei YouTube meist
     # nur VP9/AV1 – dann eben das (moderne Browser spielen es im MP4 ab)
     fmt = (f"bv*[height<={height}][vcodec^=avc1]+ba[ext=m4a]/"
            f"bv*[height<={height}]+ba[ext=m4a]/"
            f"b[height<={height}][ext=mp4]/bv*[height<={height}]+ba/b")
-    cmd = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--newline", "-f", fmt,
+    sections = []
+    if start is not None or end is not None:
+        # nur den Ausschnitt laden; an den Schnittstellen genau schneiden
+        # (sonst beginnt das Video am vorigen Schlüsselbild und die
+        # Untertitel-Zeiten passen nicht mehr)
+        sections = ["--download-sections", f"*{start or 0}-{end if end else 'inf'}",
+                    "--force-keyframes-at-cuts"]
+    cmd = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--newline", *sections, "-f", fmt,
            "--merge-output-format", "mp4", "-o", str(out / "video.%(ext)s"), url]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     last = ""
@@ -257,6 +273,8 @@ def main() -> None:
     ap.add_argument("--url", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--height", type=int, default=YT_HEIGHT)
+    ap.add_argument("--start", type=float, default=None, help="Ausschnitt ab Sekunde")
+    ap.add_argument("--end", type=float, default=None, help="Ausschnitt bis Sekunde")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -272,7 +290,15 @@ def main() -> None:
     auto = info.get("automatic_captions") or {}
     step(f"„{info.get('title', '')}“ – Original: {_lang_name(original)}")
 
-    video = download_video(args.url, out, args.height)
+    start, end = args.start, args.end
+    if start is not None and start <= 0:
+        start = None
+    if end is not None and info.get("duration") and end >= info["duration"]:
+        end = None
+    if start is not None and end is not None and end <= start:
+        raise SystemExit("Die Endzeit muss nach der Startzeit liegen.")
+    video = download_video(args.url, out, args.height, start, end)
+    offset = start or 0.0
 
     cues, text_lang, source = None, None, ""
     # a) echte deutsche Untertitel
@@ -299,6 +325,12 @@ def main() -> None:
     if not cues:
         raise SystemExit("Kein Text gefunden – das Video scheint keine Sprache zu enthalten.")
 
+    if (start is not None or end is not None) and not source.startswith("selbst abgeschrieben"):
+        # Untertitel gelten fürs ganze Video: nur den Ausschnitt, Zeiten ab 0
+        lo, hi = offset, end if end is not None else float("inf")
+        cues = [(a - offset, b - offset, t) for a, b, t in cues if lo <= a < hi]
+        if not cues:
+            raise SystemExit("Im gewählten Ausschnitt gibt es keinen Text.")
     sentences = _sentences(cues)
     if (text_lang or "de") != "de":
         originals = [s["text"] for s in sentences]
@@ -312,9 +344,10 @@ def main() -> None:
 
     meta = {
         "id": info.get("id"),
-        "title": info.get("title") or "",
+        "title": (info.get("title") or "") + (
+            f" (Ausschnitt {_hms(offset)}–{_hms(end) if end else 'Ende'})" if (start or end) else ""),
         "channel": info.get("channel") or info.get("uploader") or "",
-        "duration": info.get("duration"),
+        "duration": ((end or info.get("duration") or 0) - offset) or info.get("duration"),
         "language": _lang_name(original),
         "source": source,
         "video": video.name,
