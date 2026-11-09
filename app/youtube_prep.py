@@ -137,14 +137,15 @@ def _load_mt(repo: str):
     return MarianTokenizer.from_pretrained(path), MarianMTModel.from_pretrained(path).eval()
 
 
-def translate(texts: list[str], src: str) -> list[str]:
+def translate(texts: list[str], src: str, quiet: bool = False) -> list[str]:
     import torch
 
     torch.set_num_threads(int(os.environ.get("YT_TRANSLATE_THREADS", "16")))
     src = src.split("-")[0].lower()
     chain: list[tuple] = []
     try:
-        step(f"Lade Übersetzer {src}→de (beim ersten Mal Download) …")
+        if not quiet:
+            step(f"Lade Übersetzer {src}→de (beim ersten Mal Download) …")
         chain = [_load_mt(f"Helsinki-NLP/opus-mt-{src}-de")]
     except Exception:
         if src == "en":
@@ -160,8 +161,90 @@ def translate(texts: list[str], src: str) -> list[str]:
             with torch.inference_mode():
                 gen = model.generate(**enc, num_beams=4, max_new_tokens=400)
             res += tok.batch_decode(gen, skip_special_tokens=True)
-            step(f"Übersetze … {min(i + TRANSLATE_BATCH, len(out))} von {len(out)} Sätzen")
+            if not quiet:
+                step(f"Übersetze … {min(i + TRANSLATE_BATCH, len(out))} von {len(out)} Sätzen")
         out = res
+    return out
+
+
+# ------------------------------------------- Übersetzen mit lokalem LLM
+# Deutlich besser als Opus-MT, weil das Modell den Zusammenhang sieht und
+# Umgangssprache/zerhackte Untertitel versteht. Nutzt einen OpenAI-
+# kompatiblen Server im LAN (llama.cpp, Ollama, …):
+#   YT_LLM_URL    z. B. http://192.168.0.190:8080/v1   (leer = aus, Opus-MT)
+#   YT_LLM_MODEL  Modellname, wie ihn der Server unter /v1/models nennt
+#   YT_LLM_KEY    optional, falls der Server einen API-Schlüssel will
+YT_LLM_URL = os.environ.get("YT_LLM_URL", "").rstrip("/")
+YT_LLM_MODEL = os.environ.get("YT_LLM_MODEL", "")
+YT_LLM_KEY = os.environ.get("YT_LLM_KEY", "")
+LLM_BATCH = 20
+LLM_CONTEXT = 4
+
+_PROMPT = (
+    "Du übersetzt Untertitel eines Videos aus dem {src} ins Deutsche. Die Übersetzung wird "
+    "danach von einer Sprachausgabe vorgelesen.\n"
+    "Regeln:\n"
+    "- Natürliches, gesprochenes Deutsch, wie ein guter Synchronsprecher es sagen würde – "
+    "sinngemäß statt Wort für Wort, Redewendungen passend übertragen.\n"
+    "- Untertitel sind oft mitten im Satz zerteilt: Verstehe sie im Zusammenhang, aber gib "
+    "JEDE Nummer genau einmal zurück, in derselben Reihenfolge, nichts zusammenlegen, "
+    "nichts weglassen.\n"
+    "- Möglichst kurz halten (die Zeit im Video ist begrenzt).\n"
+    "- Zahlen, Einheiten und Abkürzungen so ausschreiben, wie man sie spricht.\n"
+    "- Eigennamen, Produktnamen und Marken nicht übersetzen.\n"
+    "- Antworte NUR mit den Zeilen im Format \"Nummer: Übersetzung\", ohne Erklärungen."
+)
+
+
+def _llm(messages: list[dict]) -> str:
+    import urllib.request
+
+    body = {"model": YT_LLM_MODEL or "default", "messages": messages, "temperature": 0.3,
+            "stream": False,
+            # Qwen3 & Co.: kein "Nachdenken" – spart viel Zeit, Übersetzen braucht das nicht
+            "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(f"{YT_LLM_URL}/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          **({"Authorization": f"Bearer {YT_LLM_KEY}"} if YT_LLM_KEY else {})})
+    with urllib.request.urlopen(req, timeout=900) as r:
+        data = json.loads(r.read())
+    text = data["choices"][0]["message"]["content"] or ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+
+
+def translate_llm(texts: list[str], src: str) -> list[str] | None:
+    """Übersetzen in Blöcken mit etwas Kontext davor. None, wenn der Server
+    nicht erreichbar ist (dann Opus-MT). Einzelne kaputte Blöcke -> Opus-MT."""
+    if not YT_LLM_URL:
+        return None
+    src_name = {"en": "Englischen", "fr": "Französischen", "es": "Spanischen", "it": "Italienischen",
+                "nl": "Niederländischen", "pl": "Polnischen", "ru": "Russischen",
+                "pt": "Portugiesischen", "ja": "Japanischen"}.get(src.split("-")[0], "Fremdsprachigen")
+    system = _PROMPT.format(src=src_name)
+    out: list[str] = []
+    for i in range(0, len(texts), LLM_BATCH):
+        batch = texts[i:i + LLM_BATCH]
+        ctx = "\n".join(f"(vorher: {t})" for t in out[-LLM_CONTEXT:])
+        user = ((f"Zusammenhang (bereits übersetzt, nicht wiederholen):\n{ctx}\n\n" if ctx else "")
+                + "Übersetze:\n" + "\n".join(f"{n + 1}: {t}" for n, t in enumerate(batch)))
+        try:
+            answer = _llm([{"role": "system", "content": system}, {"role": "user", "content": user}])
+        except Exception as exc:
+            if i == 0:
+                step(f"Übersetzungs-LLM nicht erreichbar ({str(exc)[:80]}) – nehme Opus-MT")
+                return None
+            answer = ""
+        got: dict[int, str] = {}
+        for line in answer.splitlines():
+            m = re.match(r"\s*(\d+)\s*[:.)]\s*(.+)", line)
+            if m:
+                got[int(m.group(1))] = m.group(2).strip()
+        if all(n + 1 in got for n in range(len(batch))):
+            out += [got[n + 1] for n in range(len(batch))]
+        else:  # Antwort passt nicht 1:1 -> diesen Block klassisch übersetzen
+            step(f"LLM-Antwort für Sätze {i + 1}–{i + len(batch)} unvollständig – Opus-MT für diesen Block")
+            out += translate(batch, src, quiet=True)
+        step(f"Übersetze (LLM) … {min(i + LLM_BATCH, len(texts))} von {len(texts)} Sätzen")
     return out
 
 
@@ -214,10 +297,14 @@ def main() -> None:
 
     sentences = _sentences(cues)
     if (text_lang or "de") != "de":
-        texts = translate([s["text"] for s in sentences], text_lang)
+        originals = [s["text"] for s in sentences]
+        texts = translate_llm(originals, text_lang)
+        how = f"LLM {YT_LLM_MODEL}".strip()
+        if texts is None:
+            texts, how = translate(originals, text_lang), "Opus-MT"
         for s, t in zip(sentences, texts):
             s["text"] = t
-        source += " → lokal übersetzt (Opus-MT)"
+        source += f" → lokal übersetzt ({how})"
 
     meta = {
         "id": info.get("id"),

@@ -45,6 +45,10 @@ services:
       - POCKET_CONTINUE=${POCKET_CONTINUE:-0}
       # Nachlauf nach Satzende (Frames à 80 ms): alle Texte / kurze Texte unter N Wörtern
       - POCKET_EOS_FRAMES=${POCKET_EOS_FRAMES:-}
+      # YouTube-Übersetzung per LLM im LAN (OpenAI-kompatibel, leer = Opus-MT)
+      - YT_LLM_URL=${YT_LLM_URL:-}
+      - YT_LLM_MODEL=${YT_LLM_MODEL:-}
+      - YT_LLM_KEY=${YT_LLM_KEY:-}
       - POCKET_EOS_FRAMES_SHORT=${POCKET_EOS_FRAMES_SHORT:-10}
       - POCKET_SHORT_WORDS=${POCKET_SHORT_WORDS:-8}
       # Hugging-Face-Token: Pocket-TTS-Stimmklonen ("gated" – Bedingungen
