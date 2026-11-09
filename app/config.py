@@ -35,6 +35,8 @@ DEFAULTS: dict[str, Any] = {
     # Regelmäßiger kurzer Impuls, damit Lautsprecher/Bluetooth-Boxen bei
     # längerer Stille nicht in den Standby gehen.
     "keep_speakers_awake": True,
+    # alle Stimmen/Engines auf einheitliche Lautstärke bringen (klang.normalize_loudness)
+    "loudness_norm": True,
     # Pegel des durchgehenden Hintergrundtons. Zweck: Der Browser stuft den
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
@@ -162,7 +164,7 @@ class ConfigStore:
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
-                         "keep_speakers_awake"):
+                         "keep_speakers_awake", "loudness_norm"):
                 value = bool(value)
             elif key == "voice_labels":
                 if not isinstance(value, dict):

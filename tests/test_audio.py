@@ -50,3 +50,14 @@ def test_subtitles_to_sentences():
     assert [x["text"] for x in s] == ["Hallo zusammen, heute schauen wir z. B. die Karte an.",
                                       "Am 3. Mai Neues!"]
     assert s[1]["t"] == 12.0
+
+
+def test_loudness_equalizes_levels():
+    t = np.arange(SR) / SR
+    quiet = (0.06 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    loud = (0.6 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    a = klang.normalize_loudness(quiet, SR)
+    b = klang.normalize_loudness(loud, SR)
+    ra, rb = (float(np.sqrt(np.mean(v ** 2))) for v in (a, b))
+    assert abs(20 * np.log10(ra / rb)) < 1.0
+    assert np.max(np.abs(b)) <= 0.9

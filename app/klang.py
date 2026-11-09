@@ -164,3 +164,34 @@ def apply_tempo(samples: np.ndarray, sr: int, tempo: float = 1.0,
     except Exception as exc:  # darf die Ausgabe nie verhindern
         log.warning("Tempo nicht anwendbar (%s) – gebe unverändert aus", exc)
         return samples
+
+
+# --------------------------------------------------- Lautheitsangleichung
+LOUDNESS_TARGET_DB = -20.0   # Ziel-Pegel der Sprache (RMS über die gesprochenen Teile)
+LOUDNESS_MAX_GAIN_DB = 12.0  # höchstens so viel lauter/leiser machen
+
+
+def normalize_loudness(samples: np.ndarray, sr: int, target_db: float = LOUDNESS_TARGET_DB) -> np.ndarray:
+    """Sprache auf einen einheitlichen Pegel bringen – damit Kokoro, Pocket
+    und Qwen (und verschiedene Stimmen) gleich laut klingen. Gemessen wird nur
+    über die gesprochenen Teile (Pausen zählen nicht), Spitzen werden auf
+    -1 dBFS begrenzt."""
+    if len(samples) == 0:
+        return samples
+    x = samples.astype(np.float32)
+    frame = max(1, int(0.02 * sr))
+    n = len(x) // frame
+    if n == 0:
+        return x
+    rms = np.sqrt(np.mean(x[: n * frame].reshape(n, frame) ** 2, axis=1))
+    db = 20 * np.log10(rms + 1e-9)
+    voiced = rms[db > db.max() - 30.0]
+    if len(voiced) == 0:
+        return x
+    level = 20 * np.log10(float(np.sqrt(np.mean(voiced ** 2))) + 1e-9)
+    gain_db = max(-LOUDNESS_MAX_GAIN_DB, min(LOUDNESS_MAX_GAIN_DB, target_db - level))
+    y = x * (10 ** (gain_db / 20))
+    peak = float(np.max(np.abs(y)))
+    if peak > 0.89:
+        y *= 0.89 / peak
+    return y.astype(np.float32)

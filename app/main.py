@@ -350,6 +350,8 @@ async def _yt_dub(meta: dict, original_level: float) -> None:
         if clone_tempo:
             samples = await asyncio.to_thread(klang.apply_tempo, samples, r.sample_rate, speed,
                                               cfg.get("qwen_tempo", "auto"))
+        if cfg.get("loudness_norm", True):
+            samples = klang.normalize_loudness(samples, r.sample_rate)
         audios[i] = (samples, r.sample_rate)
         done += 1
         if done % max(1, n // 20) == 0 or done == n:

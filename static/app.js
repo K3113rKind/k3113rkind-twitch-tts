@@ -8,7 +8,7 @@ const el = {
   readUser: $("read_username"), readEmotes: $("read_emotes"),
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
-  keepAwake: $("keep_speakers_awake"),
+  keepAwake: $("keep_speakers_awake"), loudness: $("loudness_norm"),
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
@@ -402,6 +402,7 @@ function collectConfig() {
     read_mentions: el.readMentions.checked,
     read_smileys: el.readSmileys.checked,
     keep_speakers_awake: el.keepAwake.checked,
+    loudness_norm: el.loudness.checked,
     keepalive_level: parseFloat(el.keepaliveLevel.value),
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
@@ -436,6 +437,7 @@ function applyConfig(c) {
   el.readMentions.checked = c.read_mentions;
   el.readSmileys.checked = c.read_smileys;
   el.keepAwake.checked = c.keep_speakers_awake;
+  el.loudness.checked = c.loudness_norm !== false;
   el.keepaliveLevel.value = c.keepalive_level;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
@@ -465,7 +467,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => {

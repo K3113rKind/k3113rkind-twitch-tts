@@ -591,6 +591,8 @@ class ChatSpeaker:
                 samples = await asyncio.to_thread(
                     klang.apply_tempo, samples, result.sample_rate, speed,
                     cfg.get("qwen_tempo", "auto"))
+            if cfg.get("loudness_norm", True):
+                samples = klang.normalize_loudness(samples, result.sample_rate)
             name_split = self._is_name_chunk(chunks[0], msg)
             if name_split and idx == 0:
                 # Namensansage: Stille am Ende weg, der Text schließt direkt an
