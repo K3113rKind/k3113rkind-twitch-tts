@@ -28,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .youtube_subs import _cues_json3, _cues_vtt, _lang_name, _sentences
+from .youtube_subs import _cues_json3, _cues_vtt, _lang_name, _sentences, clip_cues
 
 YT_HEIGHT = int(os.environ.get("YT_MAX_HEIGHT", "720") or 720)
 YT_WHISPER_MODEL = os.environ.get("YT_WHISPER_MODEL", "small")
@@ -107,7 +107,7 @@ def _sub_codes(tracks: dict, lang: str) -> list[str]:
     return sorted(codes, key=lambda c: (0 if c.endswith("-orig") else 1 if c.lower() == lang else 2, c))
 
 
-def fetch_subs(url: str, out: Path, code: str, auto: bool):
+def fetch_subs(url: str, out: Path, code: str, auto: bool, cut: float | None = None):
     """Eine Untertitel-Spur über yt-dlp laden. None bei Fehler (z. B. 429)."""
     sub_dir = out / "subs"
     sub_dir.mkdir(exist_ok=True)
@@ -123,7 +123,7 @@ def fetch_subs(url: str, out: Path, code: str, auto: bool):
         step(f"Untertitel {code} nicht ladbar ({err[:120]})")
         return None
     raw = Path(files[0]).read_text(encoding="utf-8", errors="replace")
-    cues = _cues_json3(raw) if files[0].endswith(".json3") else _cues_vtt(raw)
+    cues = _cues_json3(raw, cut) if files[0].endswith(".json3") else _cues_vtt(raw)
     return cues or None
 
 
@@ -303,7 +303,7 @@ def main() -> None:
     cues, text_lang, source = None, None, ""
     # a) echte deutsche Untertitel
     for code in _sub_codes(manual, "de"):
-        cues = fetch_subs(args.url, out, code, auto=False)
+        cues = fetch_subs(args.url, out, code, auto=False, cut=start)
         if cues:
             text_lang, source = "de", "deutsche Untertitel vom Kanal"
             break
@@ -312,7 +312,7 @@ def main() -> None:
         for tracks, is_auto, label in ((manual, False, "Untertitel vom Kanal"),
                                        (auto, True, "YouTube-Spracherkennung")):
             for code in _sub_codes(tracks, original)[:2]:
-                cues = fetch_subs(args.url, out, code, auto=is_auto)
+                cues = fetch_subs(args.url, out, code, auto=is_auto, cut=start)
                 if cues:
                     text_lang, source = original, f"{label} ({_lang_name(original)})"
                     break
@@ -327,8 +327,7 @@ def main() -> None:
 
     if (start is not None or end is not None) and not source.startswith("selbst abgeschrieben"):
         # Untertitel gelten fürs ganze Video: nur den Ausschnitt, Zeiten ab 0
-        lo, hi = offset, end if end is not None else float("inf")
-        cues = [(a - offset, b - offset, t) for a, b, t in cues if lo <= a < hi]
+        cues = clip_cues(cues, offset, end)
         if not cues:
             raise SystemExit("Im gewählten Ausschnitt gibt es keinen Text.")
     sentences = _sentences(cues)

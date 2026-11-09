@@ -50,20 +50,49 @@ def _pick(tracks: dict) -> tuple[str, dict] | None:
     return None
 
 
-def _cues_json3(raw: str) -> list[tuple[float, float, str]]:
+def _cues_json3(raw: str, cut: float | None = None) -> list[tuple[float, float, str]]:
+    """cut: Ausschnitt-Start in Sekunden. Ein Block, der davor beginnt und
+    darüber reicht, wird wortgenau getrennt (Auto-Untertitel haben Zeiten
+    pro Wort), damit am Schnitt kein Text verloren geht."""
     data = json.loads(raw)
     cues = []
     for ev in data.get("events", []):
         segs = ev.get("segs")
         if not segs:
             continue
+        start = ev.get("tStartMs", 0) / 1000.0
+        dur = ev.get("dDurationMs", 0) / 1000.0
+        if cut is not None and start < cut < start + dur and len(segs) > 1:
+            before = [s for s in segs if start + s.get("tOffsetMs", 0) / 1000.0 < cut]
+            after = segs[len(before):]
+            if before and after:
+                t0 = start + after[0].get("tOffsetMs", 0) / 1000.0
+                for part, a, b in ((before, start, t0), (after, t0, start + dur)):
+                    text = "".join(s.get("utf8", "") for s in part).replace("\n", " ").strip()
+                    if text:
+                        cues.append((a, b, text))
+                continue
         text = "".join(s.get("utf8", "") for s in segs).replace("\n", " ").strip()
         if not text:
             continue
-        start = ev.get("tStartMs", 0) / 1000.0
-        dur = ev.get("dDurationMs", 0) / 1000.0
         cues.append((start, start + dur, text))
     return cues
+
+
+def clip_cues(cues: list[tuple[float, float, str]], lo: float,
+              hi: float | None) -> list[tuple[float, float, str]]:
+    """Untertitel aufs Ausschnitt-Fenster zuschneiden, Zeiten ab 0.
+    Ein Block, der vor dem Start beginnt, bleibt drin, wenn er überwiegend
+    im Ausschnitt liegt (Beginn wird dann auf 0 gesetzt)."""
+    hi = float("inf") if hi is None else hi
+    res = []
+    for a, b, t in cues:
+        if a >= hi or b <= lo:
+            continue
+        if a < lo - 0.25 and (b - lo) < (b - a) / 2:
+            continue  # größtenteils vor dem Ausschnitt
+        res.append((max(a, lo) - lo, b - lo, t))
+    return res
 
 
 _TS = re.compile(r"(\d+):(\d{2}):(\d{2})[.,](\d{3})|(\d{2}):(\d{2})[.,](\d{3})")
