@@ -195,6 +195,10 @@
       Smileys und Emojis mitvorlesen <span class="muted">(:-) xD 😀)</span>
     </label>
     <label class="check">
+      <input id="chat_llm" type="checkbox">
+      Chat per LLM aufbereiten <span class="muted">(Slang, Zahlen, fremde Sprachen → vorlesbares Deutsch; ca. 1–2 s mehr Wartezeit, braucht LLM_URL in der .env)</span>
+    </label>
+    <label class="check">
       <input id="loudness_norm" type="checkbox" checked>
       Einheitliche Lautstärke <span class="muted">(alle Stimmen gleich laut)</span>
     </label>
@@ -278,7 +282,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=47"></script>
+<script src="/static/app.js?v=48"></script>
 <script src="/static/youtube.js?v=3"></script>
 </body>
 </html>

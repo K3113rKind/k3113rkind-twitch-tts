@@ -45,7 +45,12 @@ services:
       - POCKET_CONTINUE=${POCKET_CONTINUE:-0}
       # Nachlauf nach Satzende (Frames à 80 ms): alle Texte / kurze Texte unter N Wörtern
       - POCKET_EOS_FRAMES=${POCKET_EOS_FRAMES:-}
-      # YouTube-Übersetzung per LLM im LAN (OpenAI-kompatibel, leer = Opus-MT)
+      # LLM im LAN (OpenAI-kompatibel) für YouTube-Übersetzung und Chat-Aufbereitung
+      # (leer = aus; LLM_* geht vor YT_LLM_*)
+      - LLM_URL=${LLM_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_KEY=${LLM_KEY:-}
+      - CHAT_LLM_TIMEOUT=${CHAT_LLM_TIMEOUT:-6}
       - YT_LLM_URL=${YT_LLM_URL:-}
       - YT_LLM_MODEL=${YT_LLM_MODEL:-}
       - YT_LLM_KEY=${YT_LLM_KEY:-}

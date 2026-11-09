@@ -25,7 +25,7 @@ from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .qwen_pool import with_priority
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
-from . import klang
+from . import klang, llm
 from .voices import QWEN_STYLES, VOICES, speed_instruct, available_voices, chunk_chars, is_available, is_chunked, is_pocket, is_qwen, pool_voices
 
 # Pause zwischen zwei Abschnitten eines langen Qwen-Texts
@@ -53,6 +53,7 @@ class QueuedMessage:
     # (0 = direkt, 1–6, -1 = komplett; None = alte Automatik)
     prebuffer: int | None = None
     voice: str | None = None  # feste Stimme für diese Nachricht (sonst Einstellung)
+    llm_pending: bool = False  # wird gerade vom Chat-LLM aufbereitet
 
 
 def _trim_silence(samples, sr: int, head: bool, tail: bool, keep_s: float = 0.05):
@@ -179,7 +180,13 @@ class ChatSpeaker:
             return
 
         self._last_spoken[user_key] = now
-        self._queue.append(QueuedMessage(username=username, text=spoken))
+        msg = QueuedMessage(username=username, text=spoken)
+        if cfg.get("chat_llm") and llm.available():
+            # Aufbereitung im Hintergrund: Die Nachricht hält ihren Platz in der
+            # Reihenfolge, wird aber erst gerechnet/gespielt, wenn der Text steht.
+            msg.llm_pending = True
+            asyncio.ensure_future(self._llm_prepare(msg))
+        self._queue.append(msg)
         # Queue limit: drop oldest instead of building up delay.
         # Nachrichten, die schon in einer Gruppe berechnet werden, bleiben
         # geschützt – sonst wäre die Rechenzeit verloren. Verworfen wird die
@@ -249,6 +256,9 @@ class ChatSpeaker:
             while not self._queue:
                 self._queue_event.clear()
                 await self._queue_event.wait()
+            # vor der Auswahl zurücksetzen: was danach fertig wird (Rechnung,
+            # Chat-LLM, neue Nachricht), weckt das Warten unten sicher auf
+            self._queue_event.clear()
             self._maybe_prefetch()
             msg = self._pick_next()
             if msg is None:
@@ -262,7 +272,6 @@ class ChatSpeaker:
                         {"type": "generating", "username": head.username, "text": head.text})
                 # Aufwachen, wenn eine Berechnung fertig ist ODER eine neue
                 # Nachricht kommt (deren Ton evtl. schon im Zwischenspeicher liegt)
-                self._queue_event.clear()
                 waiter = asyncio.ensure_future(self._queue_event.wait())
                 await asyncio.wait({waiter, *self._prefetch_tasks},
                                    return_when=asyncio.FIRST_COMPLETED)
@@ -286,14 +295,17 @@ class ChatSpeaker:
         try:
             voices = {id(m): self._voice_for(m, cfg) for m in self._queue}
         except RuntimeError:
-            return self._queue[0]
+            return None if self._queue[0].llm_pending else self._queue[0]
         if not all(self.tts.parallel(v) for v in voices.values()):
-            return self._queue[0]
+            # strikt der Reihe nach – wartet, bis der Text der ältesten steht
+            return None if self._queue[0].llm_pending else self._queue[0]
         _, temperature, instruct = self._gen_params(cfg)
         # Nur Nachrichten, deren Anfang komplett fertig ist – bei abgetrennter
         # Namensansage Name UND erster Textabschnitt. "X sagt:" startet also
         # nie vor dem Text, sonst entsteht eine unnatürliche Lücke.
         for m in self._queue:
+            if m.llm_pending:
+                continue
             voice = voices[id(m)]
             chunks = self._message_chunks(m, cfg, voice)
             head = chunks[:2] if self._is_name_chunk(chunks[0], m) and len(chunks) > 1 else chunks[:1]
@@ -302,7 +314,21 @@ class ChatSpeaker:
         if self._prefetch_tasks:
             return None  # gleich ist etwas fertig
         # Nichts fertig und nichts in Arbeit (z. B. Fehler): älteste direkt rechnen
-        return self._queue[0]
+        first = next((m for m in self._queue if not m.llm_pending), None)
+        return first
+
+    async def _llm_prepare(self, msg: QueuedMessage) -> None:
+        try:
+            before = msg.text
+            msg.text = await asyncio.to_thread(llm.prepare_chat, msg.text)
+            if msg.text != before:
+                log.info("Chat-LLM: %r -> %r", before, msg.text)
+        except Exception as exc:
+            log.warning("Chat-LLM fehlgeschlagen: %s", exc)
+        finally:
+            msg.llm_pending = False
+            self._queue_event.set()
+            self._maybe_prefetch()
 
     async def say_youtube(self, text: str) -> None:
         """Ein Untertitel-Satz aus "YouTube vorlesen": wie ein Testtext (ohne
@@ -449,7 +475,7 @@ class ChatSpeaker:
         # Gespielt wird später die älteste fertige.
         candidates = []
         for m in self._queue:
-            if m.batched:
+            if m.batched or m.llm_pending:
                 continue
             mv = self._voice_for(m, cfg)
             if self.tts.parallel(mv):  # Kokoro & Co. rechnen beim Abspielen

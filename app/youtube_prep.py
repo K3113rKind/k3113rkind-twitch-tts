@@ -174,9 +174,9 @@ def translate(texts: list[str], src: str, quiet: bool = False) -> list[str]:
 #   YT_LLM_URL    z. B. http://192.168.0.190:8080/v1   (leer = aus, Opus-MT)
 #   YT_LLM_MODEL  Modellname, wie ihn der Server unter /v1/models nennt
 #   YT_LLM_KEY    optional, falls der Server einen API-Schlüssel will
-YT_LLM_URL = os.environ.get("YT_LLM_URL", "").rstrip("/")
-YT_LLM_MODEL = os.environ.get("YT_LLM_MODEL", "")
-YT_LLM_KEY = os.environ.get("YT_LLM_KEY", "")
+YT_LLM_URL = (os.environ.get("YT_LLM_URL") or os.environ.get("LLM_URL") or "").rstrip("/")
+YT_LLM_MODEL = os.environ.get("YT_LLM_MODEL") or os.environ.get("LLM_MODEL") or ""
+YT_LLM_KEY = os.environ.get("YT_LLM_KEY") or os.environ.get("LLM_KEY") or ""
 LLM_BATCH = 20
 LLM_CONTEXT = 4
 

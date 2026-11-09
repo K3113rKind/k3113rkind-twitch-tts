@@ -9,7 +9,7 @@ const el = {
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
   keepAwake: $("keep_speakers_awake"), loudness: $("loudness_norm"),
-  poolChat: $("voice_pool_chat"), poolYt: $("voice_pool_youtube"), pool: $("voice-pool"),
+  chatLlm: $("chat_llm"), poolChat: $("voice_pool_chat"), poolYt: $("voice_pool_youtube"), pool: $("voice-pool"),
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
@@ -427,6 +427,7 @@ function collectConfig() {
     keep_speakers_awake: el.keepAwake.checked,
     loudness_norm: el.loudness.checked,
     voice_pool_chat: el.poolChat.checked,
+    chat_llm: el.chatLlm.checked,
     voice_pool_youtube: el.poolYt.checked,
     voice_pool: poolSelected,
     keepalive_level: parseFloat(el.keepaliveLevel.value),
@@ -465,6 +466,7 @@ function applyConfig(c) {
   el.keepAwake.checked = c.keep_speakers_awake;
   el.loudness.checked = c.loudness_norm !== false;
   el.poolChat.checked = !!c.voice_pool_chat;
+  el.chatLlm.checked = !!c.chat_llm;
   el.poolYt.checked = !!c.voice_pool_youtube;
   poolSelected = Array.isArray(c.voice_pool) ? c.voice_pool : [];
   if (el.pool) el.pool.querySelectorAll("input").forEach((cb) => { cb.checked = poolSelected.includes(cb.value); });
@@ -497,7 +499,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.poolChat, el.poolYt, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.chatLlm, el.poolChat, el.poolYt, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => {

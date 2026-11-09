@@ -42,6 +42,8 @@ DEFAULTS: dict[str, Any] = {
     "voice_pool": [],
     "voice_pool_chat": False,
     "voice_pool_youtube": False,
+    # Chat-Nachrichten vor dem Vorlesen vom LLM aufbereiten lassen (app/llm.py)
+    "chat_llm": False,
     # Pegel des durchgehenden Hintergrundtons. Zweck: Der Browser stuft den
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
@@ -170,7 +172,7 @@ class ConfigStore:
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
                          "keep_speakers_awake", "loudness_norm", "voice_pool_chat",
-                         "voice_pool_youtube"):
+                         "voice_pool_youtube", "chat_llm"):
                 value = bool(value)
             elif key == "voice_labels":
                 if not isinstance(value, dict):
