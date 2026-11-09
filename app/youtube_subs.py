@@ -134,6 +134,38 @@ def _sentences(cues: list[tuple[float, float, str]]) -> list[dict]:
     return out
 
 
+def _download(url: str, vid: str, code: str, fmt: dict, auto: bool) -> tuple[str, str]:
+    """Untertitel-Datei holen. Erst direkt; antwortet YouTube mit 429 (Too
+    Many Requests – passiert vor allem bei automatisch übersetzten
+    Untertiteln), lädt yt-dlp sie selbst: mit Wiederholungen und Pausen und
+    dem YouTube-Zugang, den es auch für die Videos nutzt."""
+    try:
+        req = urllib.request.Request(fmt["url"], headers={"User-Agent": "Mozilla/5.0"})
+        return urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "replace"), fmt.get("ext", "vtt")
+    except Exception as exc:
+        log.info("Untertitel direkt nicht ladbar (%s) – versuche es über yt-dlp", exc)
+    import glob
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [sys.executable, "-m", "yt_dlp", "--skip-download", "--no-playlist",
+               "--write-auto-subs" if auto else "--write-subs", "--sub-langs", code,
+               "--sub-format", "json3/vtt/best", "--retries", "5", "--extractor-retries", "3",
+               "--sleep-subtitles", "3", "-o", f"{tmp}/%(id)s.%(ext)s", url]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        files = sorted(glob.glob(f"{tmp}/*.json3")) + sorted(glob.glob(f"{tmp}/*.vtt"))
+        if not files:
+            err = res.stderr.strip().splitlines()[-1] if res.stderr.strip() else "keine Datei"
+            if "429" in err:
+                raise RuntimeError("YouTube blockt den Abruf der Untertitel gerade (429 Too Many "
+                                   "Requests). Das passiert vor allem bei automatisch übersetzten "
+                                   "Untertiteln – in ein paar Minuten erneut versuchen.")
+            raise RuntimeError(f"Untertitel nicht ladbar: {err}")
+        path = files[0]
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(), "json3" if path.endswith(".json3") else "vtt"
+
+
 def load(url: str) -> dict:
     """Metadaten + deutsche Untertitel holen (blockierend, im Thread aufrufen)."""
     res = subprocess.run([sys.executable, "-m", "yt_dlp", "-J", "--no-playlist", "--skip-download", url],
@@ -153,9 +185,9 @@ def load(url: str) -> dict:
         raise RuntimeError("Für dieses Video gibt es keine deutschen Untertitel "
                            "(auch keine automatische Übersetzung).")
     code, fmt = picked
-    req = urllib.request.Request(fmt["url"], headers={"User-Agent": "Mozilla/5.0"})
-    raw = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "replace")
-    cues = _cues_json3(raw) if fmt.get("ext") == "json3" else _cues_vtt(raw)
+    auto = source != "Untertitel (vom Kanal)"
+    raw, ext = _download(url, info.get("id") or "video", code, fmt, auto)
+    cues = _cues_json3(raw) if ext == "json3" else _cues_vtt(raw)
     sentences = _sentences(cues)
     if not sentences:
         raise RuntimeError("Die deutschen Untertitel sind leer.")
