@@ -36,6 +36,11 @@ DEFAULTS: dict[str, Any] = {
     # Regelmäßiger kurzer Impuls, damit Lautsprecher/Bluetooth-Boxen bei
     # längerer Stille nicht in den Standby gehen.
     "keep_speakers_awake": True,
+    # alle Stimmen auf einheitliche Lautstärke bringen (app/loudness.py)
+    "loudness_norm": True,
+    # Stimmen-Wechsel im Chat: jeder Name bekommt fest eine Stimme aus voice_pool
+    "voice_pool": [],
+    "voice_pool_chat": False,
     # Pegel des durchgehenden Hintergrundtons. Zweck: Der Browser stuft den
     # Tab dann als tonausgebend ein und drosselt ihn im Hintergrund nicht.
     # Die nötige Stärke ist je nach Browser verschieden, deshalb einstellbar.
@@ -123,8 +128,12 @@ class ConfigStore:
             elif key in ("volume", "speed"):
                 value = min(max(float(value), 0.0), 3.0)
             elif key in ("read_username", "read_emotes", "read_mentions", "read_smileys",
-                         "keep_speakers_awake"):
+                         "keep_speakers_awake", "loudness_norm", "voice_pool_chat"):
                 value = bool(value)
+            elif key == "voice_pool":
+                if not isinstance(value, list):
+                    continue
+                value = [str(v) for v in value if str(v) in VOICES][:12]
             elif key == "bot_blocklist":
                 value = sorted({str(v).strip().lower() for v in value if str(v).strip()})
             elif key == "channel":

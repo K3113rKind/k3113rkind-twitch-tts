@@ -69,6 +69,7 @@ def _status() -> dict:
         "queue_size": speaker.queue_size,
         "listeners": broadcaster.count,
         "stream_listeners": audio_stream.listener_count,
+        "paused": audio_stream.paused,
     }
 
 
@@ -242,6 +243,16 @@ async def preview():
 async def skip():
     speaker.skip()
     return {"ok": True}
+
+
+@app.post("/api/pause")
+async def pause(body: dict | None = None):
+    """Vorlesen anhalten/fortsetzen. Ohne "paused" im Körper wird umgeschaltet.
+    Neue Nachrichten werden weiter angenommen (Warteschlangen-Grenze gilt)."""
+    want = (body or {}).get("paused")
+    audio_stream.paused = (not audio_stream.paused) if want is None else bool(want)
+    await broadcaster.send({"type": "paused", "paused": audio_stream.paused})
+    return {"paused": audio_stream.paused}
 
 
 @app.websocket("/ws")

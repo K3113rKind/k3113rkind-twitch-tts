@@ -89,7 +89,7 @@ def available_voices() -> list[dict]:
     """Nur Stimmen, deren Dateien tatsächlich da sind (für das Dropdown),
     danach die freigegebenen Stimmen der Administrativ-Instanz."""
     local = [
-        {"key": key, "label": data["label"]}
+        {"key": key, "label": data["label"], "local": True}
         for key, data in VOICES.items()
         if is_available(key)
     ]
@@ -105,3 +105,9 @@ PREVIEW_TEXT = {
 
 def preview_text(voice_key: str) -> str:
     return PREVIEW_TEXT["d"] if lang_of(voice_key) == "d" else PREVIEW_TEXT["en"]
+
+
+def pool_voices(cfg: dict) -> list[str]:
+    """Stimmen-Wechsel im Chat: die ausgewählten lokalen Stimmen, die es gibt
+    (freigegebene Stimmen der Administrativen Instanz bleiben außen vor)."""
+    return [v for v in cfg.get("voice_pool") or [] if v in VOICES and is_available(v)]

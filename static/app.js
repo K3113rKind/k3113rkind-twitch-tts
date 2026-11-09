@@ -8,7 +8,8 @@ const el = {
   readUser: $("read_username"), readEmotes: $("read_emotes"),
   usernameStyle: $("username_style"),
   readMentions: $("read_mentions"), readSmileys: $("read_smileys"),
-  keepAwake: $("keep_speakers_awake"),
+  keepAwake: $("keep_speakers_awake"), loudness: $("loudness_norm"),
+  poolChat: $("voice_pool_chat"), pool: $("voice-pool"), pause: $("pause"),
   keepaliveLevel: $("keepalive_level"), keepaliveVal: $("keepalive-val"),
   cooldown: $("cooldown_seconds"), queueLimit: $("queue_limit"),
   blocklist: $("bot_blocklist"),
@@ -145,6 +146,9 @@ function connectWs() {
       case "status":
         applyStatus(msg);
         break;
+      case "paused":
+        setPaused(msg.paused);
+        break;
       case "error":
         showError(msg.message);
         break;
@@ -161,6 +165,7 @@ function applyStatus(s) {
   el.startstop.textContent = s.running ? "Vorlesen stoppen" : "Vorlesen starten";
   el.startstop.classList.toggle("running", s.running);
   el.skip.disabled = !s.running;
+  if (typeof s.paused === "boolean") setPaused(s.paused);
   fillVoices(s.voices || []);
   if (s.error) showError(s.error); else hideError();
 }
@@ -185,6 +190,40 @@ function fillVoices(voices) {
     el.voice.append(opt);
   }
   if (voices.some((v) => v.key === selected)) el.voice.value = selected;
+  renderVoicePool(voices);
+}
+
+// Stimmen-Wechsel: Auswahl aus den lokalen Stimmen
+let poolSelected = [];
+let poolKeys = "";
+function renderVoicePool(voices) {
+  const local = voices.filter((v) => v.local);
+  const keys = local.map((v) => v.key).join(",");
+  if (!el.pool || keys === poolKeys) return;  // nur neu aufbauen, wenn sich die Liste ändert
+  poolKeys = keys;
+  el.pool.innerHTML = "";
+  for (const v of local) {
+    const label = document.createElement("label");
+    label.className = "check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = v.key;
+    cb.checked = poolSelected.includes(v.key);
+    cb.addEventListener("change", () => {
+      poolSelected = [...el.pool.querySelectorAll("input:checked")].map((x) => x.value);
+      saveConfig();
+    });
+    label.append(cb, document.createTextNode(" " + v.label));
+    el.pool.append(label);
+  }
+}
+
+// Pause-Knopf
+let paused = false;
+function setPaused(p) {
+  paused = !!p;
+  el.pause.textContent = paused ? "▶ Weiter" : "⏸ Pause";
+  el.pause.classList.toggle("running", paused);
 }
 
 /* ------------------------------------------------------- Konfiguration */
@@ -202,6 +241,9 @@ function collectConfig() {
     read_mentions: el.readMentions.checked,
     read_smileys: el.readSmileys.checked,
     keep_speakers_awake: el.keepAwake.checked,
+    loudness_norm: el.loudness.checked,
+    voice_pool_chat: el.poolChat.checked,
+    voice_pool: poolSelected,
     keepalive_level: parseFloat(el.keepaliveLevel.value),
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
@@ -231,6 +273,10 @@ function applyConfig(c) {
   el.readMentions.checked = c.read_mentions;
   el.readSmileys.checked = c.read_smileys;
   el.keepAwake.checked = c.keep_speakers_awake;
+  el.loudness.checked = c.loudness_norm !== false;
+  el.poolChat.checked = !!c.voice_pool_chat;
+  poolSelected = Array.isArray(c.voice_pool) ? c.voice_pool : [];
+  if (el.pool) el.pool.querySelectorAll("input").forEach((cb) => { cb.checked = poolSelected.includes(cb.value); });
   el.keepaliveLevel.value = c.keepalive_level;
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
@@ -253,7 +299,7 @@ function updateSliderLabels() {
 
 /* ---------------------------------------------------------------- Events */
 for (const input of [el.channel, el.voice, el.readUser, el.usernameStyle, el.readEmotes,
-                     el.readMentions, el.readSmileys, el.keepAwake, el.cooldown, el.queueLimit, el.blocklist]) {
+                     el.readMentions, el.readSmileys, el.keepAwake, el.loudness, el.poolChat, el.cooldown, el.queueLimit, el.blocklist]) {
   input.addEventListener("change", saveConfig);
 }
 el.voice.addEventListener("change", () => { el.voice.dataset.selected = el.voice.value; });
@@ -263,6 +309,13 @@ for (const slider of [el.volume, el.speed]) {
 }
 
 el.skip.addEventListener("click", () => fetch("/api/skip", { method: "POST" }));
+el.pause.addEventListener("click", async () => {
+  const res = await fetch("/api/pause", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paused: !paused }),
+  }).catch(() => null);
+  if (res && res.ok) setPaused((await res.json()).paused);
+});
 
 /* Übernehmen-Knöpfe: erst die aktuelle Eingabe speichern (das normale
    change-Event könnte noch nicht gefeuert haben, wenn direkt aus dem Feld

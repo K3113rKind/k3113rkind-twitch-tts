@@ -12,6 +12,7 @@ carries status/text for the UI, no audio.
 from __future__ import annotations
 
 import asyncio
+import zlib
 import logging
 import time
 from collections import deque
@@ -22,7 +23,8 @@ from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
 from .stream import AudioStream
 from .tts import TTS
-from .voices import available_voices, is_available, lang_of
+from . import loudness
+from .voices import available_voices, is_available, lang_of, pool_voices
 
 log = logging.getLogger(__name__)
 
@@ -187,6 +189,11 @@ class ChatSpeaker:
     async def _speak(self, msg: QueuedMessage) -> None:
         cfg = self.config.as_dict()
         voice = cfg["voice"]
+        # Stimmen-Wechsel: jeder Name bekommt fest eine Stimme aus der Auswahl
+        if cfg.get("voice_pool_chat"):
+            pool = pool_voices(cfg)
+            if pool:
+                voice = pool[zlib.crc32(msg.username.lower().encode()) % len(pool)]
         if not is_available(voice):
             usable = available_voices()
             if not usable:
@@ -206,6 +213,9 @@ class ChatSpeaker:
             text = msg.text
 
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
+        samples = result.samples
+        if cfg.get("loudness_norm", True):
+            samples = loudness.normalize(samples, getattr(result, "sample_rate", 24000))
 
         self._current_id += 1
         utterance_id = self._current_id
@@ -222,7 +232,7 @@ class ChatSpeaker:
 
         # Sequential playback: wait until the stream has emitted the whole
         # utterance or skip is pressed.
-        done_task = asyncio.ensure_future(self.audio.play(result.samples))
+        done_task = asyncio.ensure_future(self.audio.play(samples))
         skip_task = asyncio.create_task(self._skip.wait())
         done, pending = await asyncio.wait(
             {done_task, skip_task}, return_when=asyncio.FIRST_COMPLETED

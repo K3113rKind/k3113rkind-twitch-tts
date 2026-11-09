@@ -94,6 +94,9 @@ class AudioStream:
         self._listeners: set[asyncio.Queue[bytes]] = set()
         self._current: _Utterance | None = None
         self._task: asyncio.Task | None = None
+        # Pause: laufende Ansage bleibt an ihrer Stelle stehen, der Stream
+        # liefert so lange Stille – Browser/OBS bleiben verbunden.
+        self.paused = False
         self._sample_clock = 0          # fortlaufender Zähler für Phasen
         self._idle_samples = 0          # Stille seit der letzten Ansage/Impuls
         self._wake_pos: int | None = None  # Position im laufenden Weckimpuls
@@ -181,8 +184,8 @@ class AudioStream:
         block = np.zeros(BLOCK_SAMPLES, dtype=np.float32)
         t = (self._sample_clock + np.arange(BLOCK_SAMPLES)) / SAMPLE_RATE
 
-        # Ansage
-        cur = self._current
+        # Ansage (pausiert: Stelle halten, Stille ausgeben)
+        cur = None if self.paused else self._current
         if cur is not None:
             chunk = cur.samples[cur.pos:cur.pos + BLOCK_SAMPLES]
             block[:len(chunk)] += chunk * float(cfg["volume"])
@@ -199,8 +202,8 @@ class AudioStream:
         if level > 0:
             block += level * np.sin(2 * np.pi * KEEPALIVE_FREQ * t, dtype=np.float32)
 
-        # Weckimpuls nur in Sprechpausen
-        if cur is None:
+        # Weckimpuls nur in Sprechpausen (nicht mitten in einer pausierten Ansage)
+        if cur is None and (not self.paused or self._current is None):
             self._idle_samples += BLOCK_SAMPLES
             if (
                 self._wake_pos is None
