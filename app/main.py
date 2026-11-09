@@ -277,7 +277,7 @@ def _yt_meta() -> dict | None:
         return None
 
 
-async def _run_yt(url: str) -> None:
+async def _run_yt(url: str, original_level: float = 0.0) -> None:
     env = {**os.environ, "HF_HUB_OFFLINE": "0", "PYTHONUNBUFFERED": "1"}
     last = ""
     try:
@@ -297,13 +297,76 @@ async def _run_yt(url: str) -> None:
             elif not line.startswith("ERGEBNIS "):
                 last = line[-300:]
         code = await proc.wait()
-        if code != 0 or _yt_meta() is None:
+        yt_job["proc"] = None
+        meta = _yt_meta()
+        if code != 0 or meta is None:
             yt_job["error"] = last or f"Abbruch mit Code {code}"
+            return
+        await _yt_dub(meta, original_level)
+    except asyncio.CancelledError:
+        yt_job["error"] = None
     except Exception as exc:
+        log.exception("YouTube: Vertonen fehlgeschlagen")
         yt_job["error"] = str(exc)
     finally:
         yt_job["running"] = False
         yt_job["proc"] = None
+
+
+def _yt_say(msg: str) -> None:
+    yt_job["log"].append(msg)
+    log.info("YouTube: %s", msg)
+
+
+async def _yt_dub(meta: dict, original_level: float) -> None:
+    """Alle Sätze mit der eingestellten Stimme vertonen (parallele Prozesse,
+    hinter allen Chat-Nachrichten eingereiht), Tonspur bauen, ins Video setzen."""
+    from . import klang, youtube_dub
+    from .qwen_pool import with_priority
+
+    cfg = config.as_dict()
+    voice = speaker._voice(cfg)
+    speed, temperature, instruct = speaker._gen_params(cfg)
+    clone_tempo = is_qwen(voice) and VOICES.get(voice, {}).get("engine") != "qwen" \
+        and abs(float(speed or 1.0) - 1.0) > 0.01
+    sentences = meta["sentences"]
+    n = len(sentences)
+    _yt_say(f"Vertone {n} Sätze mit {VOICES.get(voice, {}).get('label', voice)} …")
+    base = time.monotonic() + 7200  # Chat und Testtexte gehen immer vor
+    sem = asyncio.Semaphore(max(2, tts.workers_for(voice) * 2))
+    audios: list = [None] * n
+    done = 0
+
+    async def one(i: int) -> None:
+        nonlocal done
+        async with sem:
+            r = await asyncio.to_thread(with_priority, (base, i), tts.synthesize,
+                                        sentences[i]["text"], voice, speed, temperature, instruct)
+        samples = r.samples
+        if clone_tempo:
+            samples = await asyncio.to_thread(klang.apply_tempo, samples, r.sample_rate, speed,
+                                              cfg.get("qwen_tempo", "auto"))
+        audios[i] = (samples, r.sample_rate)
+        done += 1
+        if done % max(1, n // 20) == 0 or done == n:
+            yt_job["log"].append(f"Vertone … {done} von {n} Sätzen")
+
+    t0 = time.monotonic()
+    await asyncio.gather(*(one(i) for i in range(n)))
+    _yt_say(f"Vertont in {(time.monotonic() - t0) / 60:.1f} min – baue deutsche Tonspur …")
+    track, stats = await asyncio.to_thread(youtube_dub.build_track, sentences, audios, meta.get("duration"))
+    dub = YT_DIR / "deutsch.wav"
+    await asyncio.to_thread(youtube_dub.write_wav, dub, track)
+    _yt_say("Setze Tonspur ins Video ein …")
+    final = YT_DIR / "video_de.mp4"
+    await asyncio.to_thread(youtube_dub.mux, YT_DIR / meta.get("video", "video.mp4"), dub, final, original_level)
+    dub.unlink(missing_ok=True)
+    (YT_DIR / meta.get("video", "video.mp4")).unlink(missing_ok=True)  # Platz sparen: Original steckt als 2. Spur drin
+    meta.update(final="video_de.mp4", voice=voice, sped_up=stats["sped_up"],
+                max_delay=round(stats["max_delay"], 1), original_level=original_level)
+    (YT_DIR / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    _yt_say(f"Fertig: {n} Sätze, {stats['sped_up']} beschleunigt, "
+            f"höchstens {stats['max_delay']:.1f} s Versatz")
 
 
 def _yt_wipe() -> None:
@@ -320,15 +383,21 @@ async def youtube_prepare(body: dict):
     await speaker.cancel_test()
     _yt_wipe()  # immer nur ein Video auf dem Server
     YT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        level = max(0.0, min(0.5, float(body.get("original_level", 0) or 0)))
+    except (TypeError, ValueError):
+        level = 0.0
     yt_job.update(running=True, error=None, url=url)
     yt_job["log"].clear()
-    asyncio.create_task(_run_yt(url))
+    yt_job["task"] = asyncio.create_task(_run_yt(url, level))
     return {"ok": True}
 
 
 @app.get("/api/youtube/job")
 async def youtube_job():
     meta = None if yt_job["running"] else _yt_meta()
+    if meta is not None and not meta.get("final"):
+        meta = None  # nur fertig vertonte Videos anbieten
     return {"running": yt_job["running"], "log": list(yt_job["log"]), "error": yt_job["error"],
             "meta": meta}
 
@@ -336,16 +405,30 @@ async def youtube_job():
 @app.get("/api/youtube/video")
 async def youtube_video():
     meta = _yt_meta()
-    path = YT_DIR / (meta or {}).get("video", "video.mp4")
-    if meta is None or not path.is_file():
-        raise HTTPException(404, "Kein Video geladen.")
+    path = YT_DIR / (meta or {}).get("final", "video_de.mp4")
+    if meta is None or not meta.get("final") or not path.is_file():
+        raise HTTPException(404, "Kein fertiges Video vorhanden.")
     # FileResponse beherrscht Range-Anfragen -> Spulen im Browser
     return FileResponse(path, media_type="video/mp4")
+
+
+@app.get("/api/youtube/export")
+async def youtube_export():
+    """Fertiges Video mit deutscher Tonspur herunterladen."""
+    meta = _yt_meta()
+    path = YT_DIR / (meta or {}).get("final", "video_de.mp4")
+    if meta is None or not meta.get("final") or not path.is_file():
+        raise HTTPException(404, "Kein fertiges Video vorhanden.")
+    title = re.sub(r"[^\w\-. ]+", "", meta.get("title") or "video").strip()[:80] or "video"
+    return FileResponse(path, media_type="video/mp4", filename=f"{title} (Deutsch KI).mp4")
 
 
 @app.post("/api/youtube/eject")
 async def youtube_eject():
     """Video samt Übersetzung verwerfen und vom Server löschen."""
+    task = yt_job.get("task")
+    if task is not None and not task.done():
+        task.cancel()
     proc = yt_job.get("proc")
     if proc is not None:
         import signal
