@@ -262,6 +262,50 @@ async def preview():
     return await say({"text": preview_text(voice if voice in VOICES else DEFAULT_VOICE)})
 
 
+# ------------------------------------------------------- YouTube vorlesen
+@app.post("/api/youtube/load")
+async def youtube_load(body: dict):
+    """Deutsche Untertitel eines Videos holen (echte, sonst YouTubes
+    automatische Übersetzung) und als Sätze mit Startzeit liefern."""
+    from . import youtube_subs
+
+    url = str(body.get("url", "")).strip()
+    if not url:
+        raise HTTPException(400, "Bitte einen YouTube-Link eingeben.")
+    try:
+        return await asyncio.to_thread(youtube_subs.load, url)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/youtube/say")
+async def youtube_say(body: dict):
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return {"ok": False}
+    if state["twitch"] is not None:
+        raise HTTPException(409, "YouTube vorlesen ist gesperrt, solange der Chat vorgelesen wird.")
+    if not is_available(config.get("voice")):
+        raise HTTPException(400, "Die eingestellte Stimme ist nicht verfügbar.")
+    await speaker.say_youtube(text)
+    return {"ok": True}
+
+
+@app.post("/api/youtube/prefetch")
+async def youtube_prefetch(body: dict):
+    texts = [str(t).strip() for t in (body.get("texts") or []) if str(t).strip()][:8]
+    if state["twitch"] is not None or not texts:
+        return {"started": 0}
+    return {"started": speaker.prefetch_texts(texts)}
+
+
+@app.post("/api/youtube/clear")
+async def youtube_clear():
+    """Gespult/gestoppt: wartende und laufende Sätze verwerfen."""
+    await speaker.cancel_test()
+    return {"ok": True}
+
+
 @app.post("/api/say")
 async def say(body: dict):
     """Testtext vorlesen, ohne dass ein Twitch-Chat laufen muss. Nutzt die

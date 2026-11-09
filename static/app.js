@@ -229,6 +229,8 @@ function connectWs() {
   };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
+    // für Zusatzmodule (YouTube vorlesen)
+    window.dispatchEvent(new CustomEvent("tts-event", { detail: msg }));
     switch (msg.type) {
       case "generating":
         showGenerating(msg);

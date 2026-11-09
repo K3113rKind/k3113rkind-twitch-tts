@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=28">
+<link rel="stylesheet" href="/static/style.css?v=29">
 </head>
 <body>
 <main class="panel">
@@ -95,6 +95,28 @@
     </div>
     <p id="say-hint" class="hint hidden">Gesperrt, solange der Chat vorgelesen wird – erst „Vorlesen stoppen“.</p>
   </section>
+
+  <details class="group" id="yt-section">
+    <summary>YouTube vorlesen <span class="muted">(deutsche Untertitel mit der eingestellten Stimme)</span></summary>
+    <div class="actions">
+      <input id="yt-url" type="url" placeholder="YouTube-Link einfügen …" autocomplete="off">
+      <button id="yt-load" type="button" class="btn-secondary">Laden</button>
+    </div>
+    <p id="yt-info" class="hint hidden"></p>
+    <div id="yt-wrap" class="yt-wrap hidden"><div id="yt-player"></div></div>
+    <div id="yt-controls" class="hidden">
+      <label>Originalton <span id="yt-vol-val" class="muted">20 %</span>
+        <input id="yt-vol" type="range" min="0" max="100" step="5" value="20">
+      </label>
+      <label>Wenn die Stimme hinterherhängt
+        <select id="yt-mode">
+          <option value="pause">Video kurz anhalten, bis sie aufholt</option>
+          <option value="skip">Sätze überspringen</option>
+        </select>
+      </label>
+      <p id="yt-state" class="hint"></p>
+    </div>
+  </details>
 
 
   <details class="group advanced">
@@ -240,6 +262,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=44"></script>
+<script src="/static/app.js?v=45"></script>
+<script src="/static/youtube.js?v=1"></script>
 </body>
 </html>

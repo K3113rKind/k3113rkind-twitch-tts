@@ -301,6 +301,40 @@ class ChatSpeaker:
         # Nichts fertig und nichts in Arbeit (z. B. Fehler): älteste direkt rechnen
         return self._queue[0]
 
+    async def say_youtube(self, text: str) -> None:
+        """Ein Untertitel-Satz aus "YouTube vorlesen": wie ein Testtext (ohne
+        Namensansage, ohne Filter), startet direkt."""
+        self.start()
+        self._queue.append(QueuedMessage(username="YouTube", text=text, raw=True, prebuffer=0))
+        self._queue_event.set()
+        self._maybe_prefetch()
+        await self._push_queue_state()
+
+    def prefetch_texts(self, texts: list[str]) -> int:
+        """Kommende Untertitel-Sätze vorab rechnen (nur mit parallelen
+        Prozessen). Niedrigere Priorität als alles, was schon in der
+        Warteschlange steht; bereits Fertiges/Laufendes wird übersprungen."""
+        cfg = self.config.as_dict()
+        try:
+            voice = self._voice(cfg)
+        except RuntimeError:
+            return 0
+        if not self.tts.parallel(voice):
+            return 0
+        _, temperature, instruct = self._gen_params(cfg)
+        base = time.monotonic() + 3600  # hinter allen echten Nachrichten
+        n = 0
+        for i, text in enumerate(texts):
+            msg = QueuedMessage(username="YouTube", text=text, raw=True)
+            for j, chunk in enumerate(self._message_chunks(msg, cfg, voice)):
+                if self.tts.has_result(chunk, voice, temperature, instruct):
+                    continue
+                asyncio.ensure_future(asyncio.to_thread(
+                    with_priority, (base + i, j),
+                    self.tts.prefetch_one, chunk, voice, temperature, instruct))
+                n += 1
+        return n
+
     async def cancel_test(self) -> None:
         """Testtexte abbrechen: wartende aus der Queue nehmen, laufenden stoppen.
         Twitch-Nachrichten bleiben unberührt."""

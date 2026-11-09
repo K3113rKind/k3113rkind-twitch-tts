@@ -305,3 +305,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .status-log .line:nth-child(2) { opacity: 0.6; }
 .status-log .line:nth-child(3) { opacity: 0.35; }
 .status-log .time { font-variant-numeric: tabular-nums; margin-right: 0.5em; opacity: 0.7; }
+
+/* YouTube vorlesen */
+#yt-section summary { cursor: pointer; font-weight: 600; }
+#yt-section .actions input[type=url] { flex: 1; min-width: 0; }
+.yt-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 0.6rem 0; background: #000; border-radius: 6px; overflow: hidden; }
+.yt-wrap iframe, .yt-wrap > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
