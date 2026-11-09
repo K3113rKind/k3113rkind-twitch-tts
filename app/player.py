@@ -234,6 +234,18 @@ class ChatSpeaker:
         await self.broadcaster.send({"type": "stop_audio"})
         await self._push_queue_state()
 
+    async def emergency_clear(self) -> None:
+        """Not-Aus: Warteschlange leeren, laufende Ansage abbrechen, laufende
+        Vorab-Berechnungen vergessen. Der Abspieler läuft weiter."""
+        self._queue.clear()
+        for task in list(self._prefetch_tasks):
+            task.cancel()
+        self._prefetch_tasks.clear()
+        self._skip.set()
+        self.audio.stop_current()
+        await self.broadcaster.send({"type": "stop_audio"})
+        await self._push_queue_state()
+
     def skip(self) -> None:
         """Abort the currently playing message, jump to the next one."""
         self._skip.set()

@@ -452,6 +452,35 @@ async def youtube_export():
     return FileResponse(path, media_type="video/mp4", filename=f"{title} (Deutsch KI).mp4")
 
 
+@app.post("/api/emergency_stop")
+async def emergency_stop():
+    """Not-Aus: alles Laufende sofort abbrechen – YouTube-Vorbereitung bzw.
+    -Vertonung, Testtexte, wartende Chat-Nachrichten, laufende Ansage – und
+    die Rechenprozesse frisch starten. Der Twitch-Chat bleibt verbunden;
+    neue Nachrichten werden danach normal vorgelesen."""
+    import signal
+
+    task = yt_job.get("task")
+    if task is not None and not task.done():
+        task.cancel()
+    proc = yt_job.get("proc")
+    if proc is not None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if yt_job.get("running"):
+        _yt_wipe()  # halbfertiges YouTube-Video verwerfen
+    yt_job.update(running=False, error=None, proc=None)
+    yt_job["log"].clear()
+    await speaker.emergency_clear()
+    pools = await asyncio.to_thread(tts.kill_pools)
+    audio_stream.paused = False
+    await broadcaster.send({"type": "paused", "paused": False})
+    log.warning("Not-Aus ausgelöst (%d Prozessgruppen beendet)", pools)
+    return {"ok": True}
+
+
 @app.post("/api/youtube/eject")
 async def youtube_eject():
     """Video samt Übersetzung verwerfen und vom Server löschen."""

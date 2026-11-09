@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=34">
+<link rel="stylesheet" href="/static/style.css?v=35">
 </head>
 <body>
 <main class="panel">
@@ -23,6 +23,7 @@
     <div class="actions twitch-actions">
       <button id="pause" type="button" class="btn-secondary" title="Vorlesen anhalten/fortsetzen – Chat und Testtext">⏸ Pause</button>
       <button id="skip" type="button" class="btn-secondary" disabled>Überspringen</button>
+      <button id="emergency" type="button" class="btn-secondary btn-danger" title="Alles sofort abbrechen: YouTube-Vertonung, Testtexte, Warteschlange, Rechenprozesse (Chat bleibt verbunden)">⏹ Not-Aus</button>
       <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
     </div>
     <label>Twitch-Kanal
@@ -290,7 +291,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=49"></script>
+<script src="/static/app.js?v=50"></script>
 <script src="/static/youtube.js?v=4"></script>
 </body>
 </html>

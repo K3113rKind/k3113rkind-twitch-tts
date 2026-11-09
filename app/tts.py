@@ -614,6 +614,7 @@ class TTS:
         # Gruppenberechnung (Batching): fertige Ergebnisse warten hier auf
         # ihre Nachricht; laufende Gruppen melden sich über ein Event.
         self._prefetched: OrderedDict = OrderedDict()
+        self._epoch = 0  # zählt Not-Aus hoch
         self._inflight: dict[tuple, threading.Event] = {}
         self._batch_lock = threading.Lock()
 
@@ -851,6 +852,21 @@ class TTS:
         if old is not None:
             old.shutdown()
 
+    def kill_pools(self) -> int:
+        """Not-Aus: alle Rechenprozesse sofort beenden. Beim nächsten Auftrag
+        starten sie frisch (Modell wird dann neu geladen)."""
+        with self._pool_lock:
+            pools = list(self._pools.values())
+            self._pools.clear()
+        for pool in pools:
+            try:
+                pool.kill()
+            except Exception as exc:
+                log.warning("Not-Aus: %s", exc)
+        # Alles, was vor dem Not-Aus angefragt wurde, nicht neu anstoßen
+        self._epoch += 1
+        return len(pools)
+
     def workers_state(self) -> dict:
         out = {}
         for engine, label in self.POOL_ENGINES.items():
@@ -1068,6 +1084,7 @@ class TTS:
             # Referenz – wird sie neu erzeugt oder der Text korrigiert, gilt der
             # alte Eintrag nicht mehr.
             key = self._qwen_key(voice_key, spec, temperature, instruct, text)
+            epoch = self._epoch
             # Läuft für diesen Text gerade eine Berechnung (Vorab oder ein
             # anderer Abschnitt mit gleichem Text)? Dann darauf warten statt
             # doppelt zu rechnen. Alles unter _batch_lock – synthesize läuft in
@@ -1087,9 +1104,13 @@ class TTS:
                                 samples=samples, duration_seconds=len(samples) / SAMPLE_RATE,
                                 sample_rate=SAMPLE_RATE, cached=True,
                             )
+                        if epoch != self._epoch:
+                            raise RuntimeError("Abgebrochen (Not-Aus)")
                         mine = self._inflight[key] = threading.Event()
                         break
                 event.wait()
+                if epoch != self._epoch:
+                    raise RuntimeError("Abgebrochen (Not-Aus)")
             try:
                 samples = self._disk.get(key)
                 if samples is not None:

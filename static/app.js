@@ -556,6 +556,18 @@ for (const slider of [el.volume, el.speed, el.temperature]) {
 }
 
 el.skip.addEventListener("click", () => fetch("/api/skip", { method: "POST" }));
+document.getElementById("emergency").addEventListener("click", async () => {
+  if (!confirm("Not-Aus: Alles Laufende sofort abbrechen (YouTube-Vertonung, Testtexte, " +
+               "Warteschlange) und die Rechenprozesse neu starten?")) return;
+  const res = await fetch("/api/emergency_stop", { method: "POST" }).catch(() => null);
+  if (res && res.ok) {
+    hideError();
+    testActive = false; sayBusy = false; updateSayButton();
+    window.dispatchEvent(new CustomEvent("tts-emergency"));
+  } else {
+    showError("Not-Aus fehlgeschlagen – Container neu starten.");
+  }
+});
 el.pause.addEventListener("click", async () => {
   const res = await fetch("/api/pause", {
     method: "POST", headers: { "Content-Type": "application/json" },

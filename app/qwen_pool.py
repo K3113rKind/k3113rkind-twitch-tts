@@ -205,6 +205,25 @@ class QwenPool:
                  self.engine, self.workers, self.total_threads,
                  min(self.workers, QWEN_WORKERS_BIG), _mem_total_gb())
 
+    def kill(self) -> None:
+        """Not-Aus: alle Prozesse sofort beenden, ohne auf laufende
+        Berechnungen zu warten. Wartende/laufende Anfragen enden mit Fehler."""
+        with self._cond:
+            self._closed = True
+            for jid, (fut, _wi) in list(self._futures.items()):
+                self._futures.pop(jid, None)
+                if not fut.done():
+                    fut.set_exception(RuntimeError("Not-Aus"))
+            self._cond.notify_all()
+            procs = list(self._procs)
+        for p in procs:
+            if p is not None and p.is_alive():
+                p.kill()
+        for p in procs:
+            if p is not None:
+                p.join(timeout=3)
+        log.warning("%s: Not-Aus – %d Rechenprozesse sofort beendet", self.engine, self.workers)
+
     def shutdown(self) -> None:
         """Alle Prozesse beenden (z. B. vor dem Umstellen der Anzahl). Laufende
         Anfragen enden mit Fehler, wartende werden abgewiesen."""

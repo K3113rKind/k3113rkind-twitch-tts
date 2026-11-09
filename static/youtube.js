@@ -102,6 +102,13 @@
     ui.load.disabled = false;
   });
 
+  // Not-Aus aus app.js: Anzeige zurücksetzen
+  window.addEventListener("tts-emergency", () => {
+    hideVideo();
+    clearInterval(poll); poll = null;
+    ui.load.disabled = false;
+  });
+
   // Auflösung merken (nur in diesem Browser)
   try {
     const h = localStorage.getItem("yt-height");
