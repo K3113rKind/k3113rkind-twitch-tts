@@ -28,7 +28,7 @@ from .player import PAUSE_BETWEEN_CHUNKS_S, Broadcaster, ChatSpeaker
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
-from .voices import (pool_voices, DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys,
+from .voices import (pool_voices, DEFAULT_VOICE, KOKORO_STOCK_REPO, VOICES, available_voices, clone_keys, CLONE_PREFIXES,
                      is_available, is_pocket, is_qwen, needs_download, ref_dir, sync_clone_voices,
                      display_name, preview_text, speed_instruct, voice_catalog)
 
@@ -805,6 +805,65 @@ async def clone_voices():
             out.append({"name": wav.stem, "kb": round(size / 1024),
                         "text": txt.read_text(encoding="utf-8").strip() if txt.exists() else ""})
     return out
+
+
+@app.post("/api/clone/voices/{name}/rename")
+async def clone_rename(name: str, body: dict):
+    """Eigene Stimme richtig umbenennen: Referenz (wav/txt), Kokoro-Paket,
+    Ausschnitte und alle Einstellungen, die auf die Stimme zeigen (Auswahl,
+    Anzeigenamen, Sichtbarkeit, Stimmen-Wechsel, Freigaben)."""
+    old = name.strip().lower()
+    new = str(body.get("new", "")).strip().lower()
+    folder = ref_dir()
+    if not CLONE_NAME.match(old) or not (folder / f"{old}.wav").exists():
+        raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
+    if not CLONE_NAME.match(new):
+        raise HTTPException(400, "Name bitte nur aus a–z, 0–9, - und _ (max. 40 Zeichen).")
+    if new == old:
+        return {"ok": True, "name": new, "voice": config.get("voice")}
+    if ((folder / f"{new}.wav").exists() or (folder / "kokoro" / f"{new}.pt").exists()
+            or _cand_dir(new).exists()):
+        raise HTTPException(409, f"Den Namen „{new}“ gibt es schon.")
+    if clone_job.get("running") and clone_job.get("name") in (old, new):
+        raise HTTPException(409, "Diese Stimme wird gerade erstellt.")
+
+    tts.forget_clone(old)  # vor dem Umbenennen: kennt die alten Pfade
+    for suffix in (".wav", ".txt"):
+        if (folder / f"{old}{suffix}").exists():
+            os.replace(folder / f"{old}{suffix}", folder / f"{new}{suffix}")
+    if (folder / "kokoro" / f"{old}.pt").exists():
+        os.replace(folder / "kokoro" / f"{old}.pt", folder / "kokoro" / f"{new}.pt")
+    if _cand_dir(old).is_dir():
+        os.replace(_cand_dir(old), _cand_dir(new))
+    sync_clone_voices()
+
+    def key(k: str) -> str:
+        for prefix in CLONE_PREFIXES:
+            if k == f"klon-{prefix}-{old}":
+                return f"klon-{prefix}-{new}"
+        return k
+
+    changes: dict = {}
+    if config.get("voice") != key(config.get("voice") or ""):
+        changes["voice"] = key(config.get("voice"))
+    for field in ("voice_labels", "voice_visibility"):
+        d = dict(config.get(field) or {})
+        moved = {key(k): v for k, v in d.items()}
+        if moved != d:
+            changes[field] = moved
+    for field in ("voice_pool", "shared_voices", "shared_published"):
+        lst = list(config.get(field) or [])
+        moved = [key(k) for k in lst]
+        if moved != lst:
+            changes[field] = moved
+    if changes:
+        config.update(changes)
+    if clone_job.get("result") and clone_job["result"].get("name") == old:
+        clone_job["result"]["name"] = new
+    log.info("Eigene Stimme %s umbenannt in %s", old, new)
+    await broadcaster.send({"type": "voices_changed"})
+    return {"ok": True, "name": new, "voice": config.get("voice"),
+            "was_shared": "shared_published" in changes}
 
 
 @app.delete("/api/clone/voices/{name}")

@@ -1086,7 +1086,33 @@ async function loadCloneList() {
       loadCandidates(v.name);
       el.cloneResult.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-    li.append(name, meta, cands, btn);
+    // Richtig umbenennen (Dateien + Einstellungen), nicht nur den Anzeigenamen
+    const ren = document.createElement("button");
+    ren.type = "button";
+    ren.textContent = "Umbenennen";
+    ren.addEventListener("click", async () => {
+      const input = window.prompt(`Neuer Name für „${v.name}“ (a–z, 0–9, - und _):`, v.name);
+      if (input === null) return;
+      const newName = input.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      if (!newName || newName === v.name) return;
+      ren.disabled = true;
+      const res = await fetch(`/api/clone/voices/${encodeURIComponent(v.name)}/rename`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new: newName }),
+      });
+      ren.disabled = false;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showError(data.detail || "Umbenennen fehlgeschlagen."); return; }
+      hideError();
+      el.voice.dataset.selected = data.voice;
+      if (el.cloneResult.dataset.name === v.name) el.cloneResult.dataset.name = newName;
+      if (data.was_shared) {
+        showError(`„${newName}“ war für die Freunde-Instanz freigegeben – dort bitte erneut ` +
+                  "„Für Produktiv übernehmen“, sonst fehlt sie dort.");
+      }
+      // Liste/Dropdown aktualisiert die voices_changed-Nachricht
+    });
+    li.append(name, meta, cands, ren, btn);
     el.cloneList.append(li);
   }
 }
