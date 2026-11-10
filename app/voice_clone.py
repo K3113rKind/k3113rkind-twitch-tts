@@ -263,6 +263,8 @@ def main() -> None:
     ap.add_argument("--name", required=True)
     ap.add_argument("--sekunden", type=float, default=20)
     ap.add_argument("--arbeit", required=True)
+    ap.add_argument("--direkt", action="store_true",
+                    help="eigene Mikrofonaufnahme: keine Musik drin, nicht trennen/enthallen")
     args = ap.parse_args()
 
     work = Path(args.arbeit)
@@ -270,8 +272,15 @@ def main() -> None:
     try:
         source = fetch(args.quelle, work)
         describe(source, "Quelle")
-        vocals = separate(source, work)
-        describe(vocals, "Stimme")
+        if args.direkt:
+            # Trennung/Enthallung frisst bei leisen, trockenen Handyaufnahmen
+            # leicht Teile der Stimme – hier gibt es nichts zu trennen
+            step("Eigene Aufnahme – ohne Stimmtrennung")
+            vocals = work / "stimme_komplett.wav"
+            to_wav(source, vocals, 24000, 1)
+        else:
+            vocals = separate(source, work)
+            describe(vocals, "Stimme")
         words = transcribe(vocals, work)
         if not words:
             raise RuntimeError("Whisper hat keine Sprache gefunden – ist in der Aufnahme jemand zu hören?")

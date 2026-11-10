@@ -623,7 +623,7 @@ clone_job: dict = {"running": False, "name": None, "log": deque(maxlen=40),
                    "result": None, "error": None}
 
 
-async def _run_clone(source: str, name: str, seconds: float, root: str) -> None:
+async def _run_clone(source: str, name: str, seconds: float, root: str, direct: bool = False) -> None:
     """Pipeline als eigener Prozess (app/voice_clone.py); Ausgabe -> Job-Log.
     root: temporärer Ordner (Upload + Arbeitsdateien), wird danach gelöscht."""
     work = str(Path(root) / "arbeit")
@@ -632,7 +632,7 @@ async def _run_clone(source: str, name: str, seconds: float, root: str) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.voice_clone", "--quelle", source, "--name", name,
-            "--sekunden", str(seconds), "--arbeit", work,
+            "--sekunden", str(seconds), "--arbeit", work, *(["--direkt"] if direct else []),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
         )
         async for raw in proc.stdout:
@@ -666,6 +666,7 @@ async def clone_start(
     seconds: float = Form(20),
     url: str = Form(""),
     overwrite: bool = Form(False),
+    direct: bool = Form(False),
     file: UploadFile | None = File(None),
 ):
     """Neue eigene Stimme aus Video-Link (YouTube/Twitch) oder Audiodatei."""
@@ -697,7 +698,7 @@ async def clone_start(
     clone_job.update(running=True, name=name, result=None, error=None, last_line=None)
     clone_job["log"].clear()
     clone_job["log"].append("Gestartet …")
-    asyncio.create_task(_run_clone(source, name, seconds, work))
+    asyncio.create_task(_run_clone(source, name, seconds, work, direct and bool(has_file)))
     return _clone_status()
 
 

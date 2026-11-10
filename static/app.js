@@ -865,6 +865,7 @@ async function submitRecording(blob, ext) {
   form.append("name", name);
   form.append("seconds", String(REC_SECONDS - 2));  // Vorlage etwas kürzer: Anfang/Ende frei wählbar
   form.append("overwrite", "false");
+  form.append("direct", "true");  // Mikrofon: keine Musik, nicht trennen
   form.append("file", blob, `aufnahme${ext}`);
   el.cloneStart.disabled = true;
   el.cloneResult.classList.add("hidden");
