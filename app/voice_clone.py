@@ -65,6 +65,30 @@ def to_wav(src: Path, dst: Path, rate: int, channels: int) -> None:
         "-ar", str(rate), str(dst))
 
 
+def describe(path: Path, label: str) -> None:
+    """Länge und Pegel in den Status schreiben – damit man ohne Shell sieht,
+    ob die Aufnahme zu kurz oder zu leise war."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        tmp = path.parent / f".{label}-pruefen.wav"
+        to_wav(path, tmp, 16000, 1)
+        audio, rate = sf.read(tmp, dtype="float32")
+        tmp.unlink(missing_ok=True)
+        if not len(audio):
+            step(f"{label}: leer!")
+            return
+        peak = float(np.max(np.abs(audio)))
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        db = lambda v: 20 * np.log10(max(v, 1e-9))  # noqa: E731
+        hint = " – sehr leise!" if db(peak) < -25 else ""
+        step(f"{label}: {len(audio) / rate:.1f} s, Spitze {db(peak):.0f} dB, "
+             f"Mittel {db(rms):.0f} dB{hint}".replace(".", ","))
+    except Exception as exc:  # nur Anzeige, nie ein Abbruchgrund
+        step(f"{label}: nicht prüfbar ({str(exc)[:80]})")
+
+
 # ------------------------------------------------------------ 2. Trennen
 SEPARATOR_PYTHON = os.environ.get("SEPARATOR_PYTHON", "/opt/separator/bin/python")
 SEPARATOR_MODELS = os.environ.get("SEPARATOR_MODELS", "/hf/audio-separator")
@@ -245,10 +269,15 @@ def main() -> None:
     work.mkdir(parents=True, exist_ok=True)
     try:
         source = fetch(args.quelle, work)
+        describe(source, "Quelle")
         vocals = separate(source, work)
+        describe(vocals, "Stimme")
         words = transcribe(vocals, work)
         if not words:
             raise RuntimeError("Whisper hat keine Sprache gefunden – ist in der Aufnahme jemand zu hören?")
+        heard = " ".join(w.word for w in words)
+        step(f"Erkannt ({len(words)} Wörter, {words[-1].end - words[0].start:.1f} s): "
+             f"{heard[:160]}{'…' if len(heard) > 160 else ''}")
         step("Beste Abschnitte wählen …")
         result = cut_candidates(vocals, words, pick_windows(words, args.sekunden), args.name)
         ensure_models()
