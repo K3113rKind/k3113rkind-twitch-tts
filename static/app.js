@@ -877,8 +877,7 @@ async function submitRecording(blob, ext) {
     el.cloneStart.disabled = false;
     return;
   }
-  hideError();
-  recInfo.textContent = `Aufnahme hochgeladen – Stimme „${name}“ wird erstellt …`;
+  recInfo.textContent += ` Stimme „${name}“ wird erstellt …`;
   showCloneStatus(await res.json().catch(() => ({ running: true, name, log: [] })));
   if (!clonePoll) clonePoll = setInterval(pollClone, 1500);
 }
@@ -902,26 +901,56 @@ recBtn.addEventListener("click", async () => {
     return;
   }
   hideError();
+  // Pegel live messen (nur Anzeige): zu leise Aufnahmen fallen sofort auf
+  let meter = null, peakDb = -100;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    meter = { ctx, read() {
+      an.getFloatTimeDomainData(buf);
+      let p = 0;
+      for (const v of buf) p = Math.max(p, Math.abs(v));
+      const db = 20 * Math.log10(Math.max(p, 1e-6));
+      peakDb = Math.max(peakDb, db);
+      return db;
+    } };
+  } catch (e) { meter = null; }
   const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
   const parts = [];
+  const started = Date.now();
   rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) parts.push(ev.data); };
   rec.onstop = () => {
     stream.getTracks().forEach((t) => t.stop());
+    if (meter) meter.ctx.close().catch(() => {});
     recBtn.disabled = false;
     recBtn.textContent = "🎙 Aufnahme (12 Sek.)";
     const mime = rec.mimeType || type || "audio/webm";
     const ext = mime.includes("mp4") ? ".m4a" : mime.includes("ogg") ? ".ogg" : ".webm";
-    submitRecording(new Blob(parts, { type: mime }), ext);
+    const blob = new Blob(parts, { type: mime });
+    const secs = ((Date.now() - started) / 1000).toFixed(1).replace(".", ",");
+    const level = meter ? ` · Spitze ${Math.round(peakDb)} dB` : "";
+    if (meter && peakDb < -30) {
+      showError(`Aufnahme sehr leise (Spitze ${Math.round(peakDb)} dB) – näher ans Mikrofon und lauter sprechen.`);
+    }
+    recInfo.textContent = `Aufgenommen: ${secs} s · ${Math.round(blob.size / 1024)} KB${level} – lade hoch …`;
+    submitRecording(blob, ext);
   };
   recBtn.disabled = true;
-  rec.start();
+  rec.start(1000);  // in 1-s-Stücken: iOS/Safari verliert so am Ende nichts
   let left = REC_SECONDS;
-  recBtn.textContent = `● Aufnahme … ${left} s`;
+  const label = () => {
+    const lv = meter ? `  ·  Pegel ${Math.round(meter.read())} dB` : "";
+    recBtn.textContent = `● Aufnahme … ${left} s${lv}`;
+  };
+  label();
   recInfo.textContent = "Jetzt sprechen – ruhig und deutlich, ganze Sätze.";
+  const levelTimer = meter ? setInterval(label, 200) : null;
   const timer = setInterval(() => {
     left -= 1;
-    if (left > 0) recBtn.textContent = `● Aufnahme … ${left} s`;
-    else { clearInterval(timer); rec.stop(); }
+    if (left <= 0) { clearInterval(timer); if (levelTimer) clearInterval(levelTimer); rec.stop(); }
   }, 1000);
 });
 
