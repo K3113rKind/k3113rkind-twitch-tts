@@ -1344,7 +1344,10 @@ function fillWorkers(state) {
       workersList.append(div, note);
       row = workerRows[engine] = { sel, st, note };
     }
-    if (!row.sel.dataset.dirty) row.sel.value = String(w.count);
+    // nicht bei offener Auswahl oder ungesendeter Änderung setzen (iPhone springt sonst zurück)
+    if (!row.sel.dataset.dirty && document.activeElement !== row.sel && row.sel.value !== String(w.count)) {
+      row.sel.value = String(w.count);
+    }
     row.st.textContent = w.count <= 1 ? "im Hauptprozess"
       : w.running ? `${w.running} laufen` : "starten bei Bedarf";
     row.note.textContent = w.note || "";
