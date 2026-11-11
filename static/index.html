@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
 <main class="panel">
@@ -44,6 +44,23 @@
       <button id="startstop" type="button" class="btn-primary">Vorlesen starten</button>
     </div>
     <p class="hint">Diesen Tab geöffnet lassen – der Ton kommt aus diesem Fenster. Der Tab darf im Hintergrund liegen, auf dem Handy darf auch das Display gesperrt sein. Nur nicht schließen. Der Ton läuft etwa 1–2 Sekunden hinter der Anzeige.</p>
+  </section>
+
+  <section class="group" id="say-section">
+    <label>Text vorlesen <span class="muted">(nur ohne laufenden Chat)</span>
+      <textarea id="say-text" rows="4" maxlength="1000" placeholder="Eigenen Text eingeben …"></textarea>
+    </label>
+    <div class="say-count muted"><span id="say-count">0</span> / 1000 Zeichen</div>
+    <div class="actions">
+      <button id="say-direct" type="button" class="btn-secondary" title="Sofort mit dem Vorlesen beginnen, Rest wird nebenher gerechnet">Direkt vorlesen</button>
+      <select id="say-prebuffer" title="So viele Abschnitte werden vorab gerechnet, bevor das Vorlesen startet">
+        <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>
+        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+        <option value="all">kplt.</option>
+      </select>
+      <button id="say-delayed" type="button" class="btn-secondary" title="Erst die gewählte Anzahl Abschnitte (oder alles) rechnen, dann ohne Pausen vorlesen">Verzögert vorlesen</button>
+      <button id="say-cancel" type="button" class="btn-secondary" title="Vorlesen des Textes abbrechen">■ Stopp</button>
+    </div>
   </section>
 
   <details class="group advanced">
@@ -109,6 +126,6 @@
     </label>
   </details>
 </main>
-<script src="/static/app.js?v=5"></script>
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>

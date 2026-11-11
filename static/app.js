@@ -400,6 +400,47 @@ el.startstop.addEventListener("click", async () => {
   }
 });
 
+/* ------------------------------------------------------------- Textbox */
+const sayText = document.getElementById("say-text");
+const sayCount = document.getElementById("say-count");
+sayText.addEventListener("input", () => { sayCount.textContent = sayText.value.length; });
+
+async function sayNow(prebuffer, button) {
+  ensureAudio(); // Nutzer-Geste: löst ggf. die Autoplay-Sperre
+  const text = sayText.value.trim();
+  if (!text) { sayText.focus(); return; }
+  button.disabled = true;
+  try {
+    clearTimeout(saveTimer);
+    await fetch("/api/config", {  // aktuelle Stimme/Geschwindigkeit mitnehmen
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectConfig()),
+    });
+    const res = await fetch("/api/say", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, prebuffer }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showError(body.detail || res.statusText);
+    } else {
+      hideError();
+    }
+  } catch (e) {
+    showError("Vorlesen fehlgeschlagen: " + e);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+const sayDirect = document.getElementById("say-direct");
+const sayDelayed = document.getElementById("say-delayed");
+sayDirect.addEventListener("click", () => sayNow("direct", sayDirect));
+sayDelayed.addEventListener("click", () =>
+  sayNow(document.getElementById("say-prebuffer").value, sayDelayed));
+document.getElementById("say-cancel").addEventListener("click", () =>
+  fetch("/api/say/cancel", { method: "POST" }).catch(() => {}));
+
 /* ------------------------------------------------------------------ Init */
 (async function init() {
   applyConfig(await fetch("/api/config").then((r) => r.json()));

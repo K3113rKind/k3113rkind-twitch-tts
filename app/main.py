@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from . import remote
 from .config import INTERNAL_KEYS, ConfigStore
 from .player import Broadcaster, ChatSpeaker
+from .textread import MAX_CHARS, TextReader
 from .stream import AudioStream
 from .tts import TTS
 from .twitch import TwitchChatClient
@@ -32,6 +33,7 @@ broadcaster = Broadcaster()
 audio_stream = AudioStream(config)
 speaker = ChatSpeaker(config, tts, broadcaster, audio_stream)
 remote.REGISTRY = remote.RemoteVoices(config)
+reader = TextReader(config, tts, broadcaster, audio_stream)
 
 state: dict = {"twitch": None, "error": None, "loading": False}
 
@@ -152,6 +154,7 @@ async def _start_locked():
             )
         voice = usable[0]["key"]
 
+    await reader.cancel()  # Textbox endet, sobald der Chat vorgelesen wird
     try:
         await _ensure_loaded(voice)
     except Exception as exc:
@@ -237,6 +240,47 @@ async def preview():
         await audio_stream.play(result.samples)
         await broadcaster.send({"type": "done", "id": 0})
     return _status()
+
+
+@app.post("/api/say")
+async def say(body: dict):
+    """Textbox vorlesen (höchstens 1000 Zeichen, nur ohne laufenden Chat).
+    prebuffer: "direct" = sofort, 1–6 = so viele Abschnitte vorab, "all" = alles."""
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "Bitte einen Text eingeben.")
+    if len(text) > MAX_CHARS:
+        raise HTTPException(400, f"Höchstens {MAX_CHARS} Zeichen.")
+    if state["twitch"] is not None:
+        raise HTTPException(409, "Die Textbox geht nur, solange der Chat nicht vorgelesen wird.")
+    raw = str(body.get("prebuffer") or "direct").lower()
+    if raw in ("all", "kplt", "-1"):
+        prebuffer = -1
+    elif raw == "direct":
+        prebuffer = 0
+    else:
+        try:
+            prebuffer = max(0, min(6, int(raw)))
+        except ValueError:
+            raise HTTPException(400, "Ungültiger Wert für den Vorlauf.")
+    voice = config.get("voice")
+    if not is_available(voice):
+        raise HTTPException(400, "Diese Stimme ist gerade nicht verfügbar.")
+    try:
+        await _ensure_loaded(voice)
+    except Exception as exc:
+        raise HTTPException(500, f"Stimme konnte nicht geladen werden: {exc}")
+    try:
+        n = await reader.start(text, prebuffer)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "sections": n}
+
+
+@app.post("/api/say/cancel")
+async def say_cancel():
+    await reader.cancel()
+    return {"ok": True}
 
 
 @app.post("/api/skip")
