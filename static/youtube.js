@@ -124,3 +124,70 @@
   // Beim Öffnen der Seite: läuft eine Vorbereitung oder liegt schon ein Video bereit?
   pollJob();
 })();
+
+/* Video der Freunde-Instanz: Stand anzeigen, ansehen, exportieren, löschen.
+   Wird dort nach 12 h automatisch gelöscht. */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const box = $("ytf-box"), info = $("ytf-info"), wrap = $("ytf-wrap"), video = $("ytf-video");
+  const show = $("ytf-show"), exp = $("ytf-export"), eject = $("ytf-eject");
+  if (!box) return;
+  let shownId = null, timer = null;
+
+  const hms = (s) => {
+    s = Math.max(0, Math.round(s || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  function hideVideo() {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    wrap.classList.add("hidden");
+    shownId = null;
+  }
+
+  async function poll() {
+    const job = await fetch("/api/youtube/job?slot=freunde").then((r) => r.json()).catch(() => null);
+    clearTimeout(timer);
+    timer = setTimeout(poll, job && job.running ? 3000 : 15000);
+    if (!job) return;
+    const m = job.meta;
+    if (!job.running && !m && !job.error) {
+      box.classList.add("hidden");
+      hideVideo();
+      return;
+    }
+    box.classList.remove("hidden");
+    if (job.running) {
+      info.textContent = "In Bearbeitung: " + (job.log && job.log.length ? job.log[job.log.length - 1] : "Starte …") +
+        (job.url ? ` · ${job.url}` : "");
+    } else if (job.error) {
+      info.textContent = "Fehler: " + job.error;
+    } else {
+      const left = job.expires_in != null ? ` · wird in ${Math.floor(job.expires_in / 3600)} h ${Math.floor((job.expires_in % 3600) / 60)} min gelöscht` : "";
+      info.textContent = `${m.title}` + (m.channel ? ` – ${m.channel}` : "") + ` · ${hms(m.duration)} min` + left;
+      if (shownId && shownId !== m.id) hideVideo();
+      box.dataset.id = m.id || "";
+    }
+    const ready = !job.running && !!m;
+    show.classList.toggle("hidden", !ready);
+    exp.classList.toggle("hidden", !ready);
+    if (!ready) hideVideo();
+  }
+
+  show.addEventListener("click", () => {
+    if (!wrap.classList.contains("hidden")) { hideVideo(); return; }
+    video.src = `/api/youtube/video?slot=freunde&t=${Date.now()}`;
+    wrap.classList.remove("hidden");
+    shownId = box.dataset.id || "";
+  });
+  eject.addEventListener("click", async () => {
+    if (!window.confirm("Video der Freunde-Instanz abbrechen bzw. vom Server löschen?")) return;
+    hideVideo();
+    await fetch("/api/youtube/eject?slot=freunde", { method: "POST" }).catch(() => {});
+    poll();
+  });
+  poll();
+})();

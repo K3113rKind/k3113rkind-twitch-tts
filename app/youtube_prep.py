@@ -275,6 +275,8 @@ def main() -> None:
     ap.add_argument("--height", type=int, default=YT_HEIGHT)
     ap.add_argument("--start", type=float, default=None, help="Ausschnitt ab Sekunde")
     ap.add_argument("--end", type=float, default=None, help="Ausschnitt bis Sekunde")
+    ap.add_argument("--max-seconds", type=float, default=None,
+                    help="längstes erlaubtes Video bzw. längster Ausschnitt")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -297,6 +299,14 @@ def main() -> None:
         end = None
     if start is not None and end is not None and end <= start:
         raise SystemExit("Die Endzeit muss nach der Startzeit liegen.")
+    if args.max_seconds:
+        total = info.get("duration")
+        if not total and end is None:
+            raise SystemExit("Videolänge unbekannt (Livestream?) – bitte Start- und Endzeit angeben.")
+        length = (end if end is not None else total) - (start or 0)
+        if length > args.max_seconds + 1:
+            raise SystemExit(f"Zu lang ({_hms(length)}): höchstens {_hms(args.max_seconds)} – "
+                             "bitte mit Start-/Endzeit einen Ausschnitt wählen.")
     video = download_video(args.url, out, args.height, start, end)
     offset = start or 0.0
 

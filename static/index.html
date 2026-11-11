@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch TTS Admin</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=37">
+<link rel="stylesheet" href="/static/style.css?v=38">
 </head>
 <body>
 <main class="panel">
@@ -126,6 +126,16 @@
     <div class="actions">
       <a id="yt-export" class="btn btn-secondary hidden" href="/api/youtube/export" download>⬇ Exportieren</a>
       <button id="yt-eject" type="button" class="btn-secondary hidden" title="Video samt Übersetzung verwerfen und vom Server löschen">⏏ Auswerfen</button>
+    </div>
+    <div id="ytf-box" class="ytf-box hidden">
+      <h3>Video der Freunde-Instanz</h3>
+      <p id="ytf-info" class="hint"></p>
+      <div id="ytf-wrap" class="yt-wrap hidden"><video id="ytf-video" controls playsinline preload="metadata"></video></div>
+      <div class="actions">
+        <button id="ytf-show" type="button" class="btn-secondary hidden">▶ Ansehen</button>
+        <a id="ytf-export" class="btn btn-secondary hidden" href="/api/youtube/export?slot=freunde" download>⬇ Exportieren</a>
+        <button id="ytf-eject" type="button" class="btn-secondary" title="Bearbeitung abbrechen bzw. Video vom Server löschen">⏏ Löschen</button>
+      </div>
     </div>
   </section>
 
@@ -296,6 +306,6 @@
   </details>
 </main>
 <script src="/static/app.js?v=54"></script>
-<script src="/static/youtube.js?v=6"></script>
+<script src="/static/youtube.js?v=7"></script>
 </body>
 </html>

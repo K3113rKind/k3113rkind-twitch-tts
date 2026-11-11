@@ -326,3 +326,7 @@ a.btn-secondary.hidden { display: none; }
 
 .btn-danger { border-color: var(--err) !important; color: var(--err) !important; }
 #yt-section .yt-times input { flex: 1; min-width: 0; }
+
+/* Video der Freunde-Instanz (in der YouTube-Gruppe) */
+.ytf-box { margin-top: 1rem; padding-top: 0.6rem; border-top: 1px solid var(--line); }
+.ytf-box h3 { margin: 0 0 0.3rem; font-size: 1rem; }

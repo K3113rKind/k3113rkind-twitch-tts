@@ -264,93 +264,150 @@ async def preview():
 
 
 # ------------------------------------------------------- YouTube vorlesen
-# Ein Video zur Zeit: herunterladen (720p), Text besorgen und übersetzen
-# (app/youtube_prep.py als eigener Prozess), dann im Browser abspielen und
-# die deutschen Sätze passend zur Position vorlesen. "Auswerfen" löscht alles.
+# Je Platz ein Video zur Zeit: herunterladen, Text besorgen und übersetzen
+# (app/youtube_prep.py als eigener Prozess), vertonen und die deutsche Spur
+# ins Video setzen. "Auswerfen" löscht alles. Zwei getrennte Plätze: einer für
+# diese Instanz, einer für die Freunde-Instanz (über /api/share/youtube/*,
+# höchstens 720p und 20 Minuten, wird nach 12 h automatisch gelöscht).
 YT_DIR = Path(os.environ.get("CONFIG_PATH", "/config/config.json")).parent / "youtube"
-yt_job: dict = {"running": False, "log": deque(maxlen=12), "error": None, "proc": None, "url": ""}
+FRIENDS_MAX_SECONDS = 20 * 60
+FRIENDS_MAX_HEIGHT = 720
+FRIENDS_KEEP_SECONDS = 12 * 3600
+# Kokoro-Standardstimmen, die es auf der Freunde-Instanz selbst gibt
+FRIENDS_LOCAL_VOICES = {"victoria", "martin", "heart", "michael"}
 
 
-def _yt_meta() -> dict | None:
-    try:
-        return json.loads((YT_DIR / "meta.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+class YtSlot:
+    def __init__(self, name: str, folder: Path, max_seconds: float | None = None,
+                 max_height: int = 2160) -> None:
+        self.name, self.dir = name, folder
+        self.max_seconds, self.max_height = max_seconds, max_height
+        self.job: dict = {"running": False, "log": deque(maxlen=12), "error": None,
+                          "proc": None, "url": "", "task": None}
+
+    def meta(self) -> dict | None:
+        try:
+            return json.loads((self.dir / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def final_path(self) -> Path | None:
+        meta = self.meta()
+        path = self.dir / (meta or {}).get("final", "video_de.mp4")
+        return path if meta is not None and meta.get("final") and path.is_file() else None
+
+    def wipe(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    async def kill(self) -> None:
+        """Laufende Vorbereitung/Vertonung abbrechen (inkl. yt-dlp/ffmpeg)."""
+        import signal
+
+        task = self.job.get("task")
+        if task is not None and not task.done():
+            task.cancel()
+        proc = self.job.get("proc")
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            await asyncio.sleep(0.3)
+
+    def status(self) -> dict:
+        job = self.job
+        meta = None if job["running"] else self.meta()
+        if meta is not None and not meta.get("final"):
+            meta = None  # nur fertig vertonte Videos anbieten
+        return {"running": job["running"], "log": list(job["log"]), "error": job["error"],
+                "meta": meta, "url": job.get("url", "")}
 
 
-async def _run_yt(url: str, original_level: float = 0.0, height: int = 720,
-                  start: float | None = None, end: float | None = None) -> None:
+YT_ADMIN = YtSlot("admin", YT_DIR)
+YT_FRIENDS = YtSlot("freunde", YT_DIR.parent / "youtube-freunde",
+                    max_seconds=FRIENDS_MAX_SECONDS, max_height=FRIENDS_MAX_HEIGHT)
+yt_job = YT_ADMIN.job  # bisheriger Name
+
+
+async def _run_yt(slot: YtSlot, url: str, original_level: float = 0.0, height: int = 720,
+                  start: float | None = None, end: float | None = None,
+                  voice: str | None = None, pool: list[str] | None = None) -> None:
+    job = slot.job
     env = {**os.environ, "HF_HUB_OFFLINE": "0", "PYTHONUNBUFFERED": "1"}
     last = ""
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "app.youtube_prep", "--url", url, "--out", str(YT_DIR),
+            sys.executable, "-m", "app.youtube_prep", "--url", url, "--out", str(slot.dir),
             "--height", str(height),
             *(["--start", str(start)] if start is not None else []),
             *(["--end", str(end)] if end is not None else []),
+            *(["--max-seconds", str(slot.max_seconds)] if slot.max_seconds else []),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
             start_new_session=True,  # eigene Prozessgruppe: Auswerfen beendet auch yt-dlp/ffmpeg
         )
-        yt_job["proc"] = proc
+        job["proc"] = proc
         async for raw in proc.stdout:
             line = raw.decode(errors="replace").rstrip()
             if not line:
                 continue
-            log.info("YouTube: %s", line)
+            log.info("YouTube (%s): %s", slot.name, line)
             if line.startswith("SCHRITT: "):
-                yt_job["log"].append(line[len("SCHRITT: "):])
+                job["log"].append(line[len("SCHRITT: "):])
             elif not line.startswith("ERGEBNIS "):
                 last = line[-300:]
         code = await proc.wait()
-        yt_job["proc"] = None
-        meta = _yt_meta()
+        job["proc"] = None
+        meta = slot.meta()
         if code != 0 or meta is None:
-            yt_job["error"] = last or f"Abbruch mit Code {code}"
+            job["error"] = last or f"Abbruch mit Code {code}"
             return
-        await _yt_dub(meta, original_level)
+        await _yt_dub(slot, meta, original_level, voice, pool)
     except asyncio.CancelledError:
-        yt_job["error"] = None
+        job["error"] = None
     except Exception as exc:
-        log.exception("YouTube: Vertonen fehlgeschlagen")
-        yt_job["error"] = str(exc)
+        log.exception("YouTube (%s): Vertonen fehlgeschlagen", slot.name)
+        job["error"] = str(exc)
     finally:
-        yt_job["running"] = False
-        yt_job["proc"] = None
+        job["running"] = False
+        job["proc"] = None
 
 
-def _yt_say(msg: str) -> None:
-    yt_job["log"].append(msg)
-    log.info("YouTube: %s", msg)
+def _yt_say(slot: YtSlot, msg: str) -> None:
+    slot.job["log"].append(msg)
+    log.info("YouTube (%s): %s", slot.name, msg)
 
 
-async def _yt_dub(meta: dict, original_level: float) -> None:
-    """Alle Sätze mit der eingestellten Stimme vertonen (parallele Prozesse,
-    hinter allen Chat-Nachrichten eingereiht), Tonspur bauen, ins Video setzen."""
+async def _yt_dub(slot: YtSlot, meta: dict, original_level: float,
+                  voice: str | None = None, pool: list[str] | None = None) -> None:
+    """Alle Sätze vertonen (parallele Prozesse, hinter allen Chat-Nachrichten
+    eingereiht), Tonspur bauen, ins Video setzen. voice/pool: fest vorgegeben
+    (Freunde-Instanz), sonst aus den Einstellungen dieser Instanz."""
     from . import klang, youtube_dub
     from .qwen_pool import with_priority
 
     cfg = config.as_dict()
-    voice = speaker._voice(cfg)
+    if voice is None:
+        voice = speaker._voice(cfg)
+        pool = pool_voices(cfg) if cfg.get("voice_pool_youtube") else []
     # Beim Vertonen bestimmt das Video das Tempo, nicht der Regler: jeder Satz
     # wird in Normaltempo gerechnet und nur so weit beschleunigt, wie er in
     # seine Lücke passen muss (youtube_dub.build_track) – ein Bearbeitungs-
     # schritt statt zwei (Regler + Anpassung) und keine unnötig gedehnten Sätze.
     _speed, temperature, instruct = speaker._gen_params({**cfg, "speed": 1.0})
     speed = 1.0
-    clone_tempo = False
     sentences = meta["sentences"]
     n = len(sentences)
     # Stimmen-Wechsel bei erkannten Sprecherwechseln (">>" in den Untertiteln)
-    pool = pool_voices(cfg) if cfg.get("voice_pool_youtube") else []
+    pool = list(pool or [])
     speakers = len({s.get("sp", 0) for s in sentences})
     if pool and speakers > 1:
-        _yt_say(f"{speakers} Sprecherwechsel-Abschnitte erkannt – wechsle zwischen {len(pool)} Stimmen")
+        _yt_say(slot, f"{speakers} Sprecherwechsel-Abschnitte erkannt – wechsle zwischen {len(pool)} Stimmen")
     else:
         pool = []
 
     def voice_of(i: int) -> str:
         return pool[sentences[i].get("sp", 0) % len(pool)] if pool else voice
-    _yt_say(f"Vertone {n} Sätze mit {VOICES.get(voice, {}).get('label', voice)} …")
+    _yt_say(slot, f"Vertone {n} Sätze mit {VOICES.get(voice, {}).get('label', voice)} …")
     base = time.monotonic() + 7200  # Chat und Testtexte gehen immer vor
     sem = asyncio.Semaphore(max(2, tts.workers_for(voice) * 2))
     serial = asyncio.Lock()
@@ -368,32 +425,30 @@ async def _yt_dub(meta: dict, original_level: float) -> None:
                 r = await asyncio.to_thread(with_priority, (base, i), tts.synthesize,
                                             sentences[i]["text"], v, speed, temperature, instruct)
         samples = r.samples
-        if clone_tempo:
-            samples = await asyncio.to_thread(klang.apply_tempo, samples, r.sample_rate, speed,
-                                              cfg.get("qwen_tempo", "auto"))
-        if cfg.get("loudness_norm", True):
+        if cfg.get("loudness_norm", True) or slot is YT_FRIENDS:
             samples = klang.normalize_loudness(samples, r.sample_rate)
         audios[i] = (samples, r.sample_rate)
         done += 1
         if done % max(1, n // 20) == 0 or done == n:
-            yt_job["log"].append(f"Vertone … {done} von {n} Sätzen")
+            slot.job["log"].append(f"Vertone … {done} von {n} Sätzen")
 
     t0 = time.monotonic()
     await asyncio.gather(*(one(i) for i in range(n)))
-    _yt_say(f"Vertont in {(time.monotonic() - t0) / 60:.1f} min – baue deutsche Tonspur …")
+    _yt_say(slot, f"Vertont in {(time.monotonic() - t0) / 60:.1f} min – baue deutsche Tonspur …")
     track, stats = await asyncio.to_thread(youtube_dub.build_track, sentences, audios, meta.get("duration"))
-    dub = YT_DIR / "deutsch.wav"
+    dub = slot.dir / "deutsch.wav"
     await asyncio.to_thread(youtube_dub.write_wav, dub, track)
-    _yt_say("Setze Tonspur ins Video ein …")
-    final = YT_DIR / "video_de.mp4"
-    await asyncio.to_thread(youtube_dub.mux, YT_DIR / meta.get("video", "video.mp4"), dub, final, original_level)
+    _yt_say(slot, "Setze Tonspur ins Video ein …")
+    final = slot.dir / "video_de.mp4"
+    await asyncio.to_thread(youtube_dub.mux, slot.dir / meta.get("video", "video.mp4"), dub, final, original_level)
     dub.unlink(missing_ok=True)
-    (YT_DIR / meta.get("video", "video.mp4")).unlink(missing_ok=True)  # Platz sparen: Original steckt als 2. Spur drin
+    (slot.dir / meta.get("video", "video.mp4")).unlink(missing_ok=True)  # Platz sparen: Original steckt als 2. Spur drin
     meta.update(final="video_de.mp4", voice=voice, sped_up=stats["sped_up"],
-                max_delay=round(stats["max_delay"], 1), original_level=original_level)
-    (YT_DIR / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-    _yt_say(f"Fertig: {n} Sätze, {stats['sped_up']} beschleunigt, "
-            f"höchstens {stats['max_delay']:.1f} s Versatz")
+                max_delay=round(stats["max_delay"], 1), original_level=original_level,
+                finished=time.time())
+    (slot.dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    _yt_say(slot, f"Fertig: {n} Sätze, {stats['sped_up']} beschleunigt, "
+                  f"höchstens {stats['max_delay']:.1f} s Versatz")
 
 
 def _yt_time(value) -> float | None:
@@ -414,15 +469,19 @@ def _yt_time(value) -> float | None:
 
 
 def _yt_wipe() -> None:
-    shutil.rmtree(YT_DIR, ignore_errors=True)
+    YT_ADMIN.wipe()
 
 
-@app.post("/api/youtube/prepare")
-async def youtube_prepare(body: dict):
+def _slot(name: str | None) -> YtSlot:
+    return YT_FRIENDS if (name or "") == "freunde" else YT_ADMIN
+
+
+async def _yt_start(slot: YtSlot, body: dict, voice: str | None = None,
+                    pool: list[str] | None = None) -> dict:
     url = str(body.get("url", "")).strip()
     if not url:
         raise HTTPException(400, "Bitte einen YouTube-Link eingeben.")
-    if yt_job["running"]:
+    if slot.job["running"]:
         raise HTTPException(409, "Es wird gerade schon ein Video vorbereitet.")
     # erst alle Eingaben prüfen, dann erst Altes löschen und starten
     try:
@@ -434,96 +493,156 @@ async def youtube_prepare(body: dict):
     except (TypeError, ValueError):
         height = 720
     height = height if height in (360, 480, 720, 1080, 1440, 2160) else 720
+    height = min(height, slot.max_height)
     start, end = _yt_time(body.get("start")), _yt_time(body.get("end"))
     if start is not None and end is not None and end <= start:
         raise HTTPException(400, "Die Endzeit muss nach der Startzeit liegen.")
-    await speaker.cancel_test()
-    _yt_wipe()  # immer nur ein Video auf dem Server
-    YT_DIR.mkdir(parents=True, exist_ok=True)
-    yt_job.update(running=True, error=None, url=url)
-    yt_job["log"].clear()
-    yt_job["task"] = asyncio.create_task(_run_yt(url, level, height, start, end))
+    if slot.max_seconds and start is not None and end is not None and end - start > slot.max_seconds:
+        raise HTTPException(400, f"Höchstens {slot.max_seconds // 60:.0f} Minuten pro Video bzw. Ausschnitt.")
+    if slot is YT_ADMIN:
+        await speaker.cancel_test()
+    slot.wipe()  # je Platz immer nur ein Video auf dem Server
+    slot.dir.mkdir(parents=True, exist_ok=True)
+    slot.job.update(running=True, error=None, url=url)
+    slot.job["log"].clear()
+    slot.job["task"] = asyncio.create_task(_run_yt(slot, url, level, height, start, end, voice, pool))
     return {"ok": True}
 
 
+async def _yt_eject(slot: YtSlot) -> dict:
+    await slot.kill()
+    if slot is YT_ADMIN:
+        await speaker.cancel_test()
+    slot.wipe()
+    slot.job.update(error=None, url="")
+    slot.job["log"].clear()
+    return {"ok": True}
+
+
+def _yt_file(slot: YtSlot, download: bool):
+    path = slot.final_path()
+    if path is None:
+        raise HTTPException(404, "Kein fertiges Video vorhanden.")
+    if not download:
+        # FileResponse beherrscht Range-Anfragen -> Spulen im Browser
+        return FileResponse(path, media_type="video/mp4")
+    title = re.sub(r"[^\w\-. ]+", "", slot.meta().get("title") or "video").strip()[:80] or "video"
+    return FileResponse(path, media_type="video/mp4", filename=f"{title} (Deutsch KI).mp4")
+
+
+@app.post("/api/youtube/prepare")
+async def youtube_prepare(body: dict):
+    return await _yt_start(YT_ADMIN, body)
+
+
+# slot=freunde: Video der Freunde-Instanz ansehen/exportieren/löschen
 @app.get("/api/youtube/job")
-async def youtube_job():
-    meta = None if yt_job["running"] else _yt_meta()
-    if meta is not None and not meta.get("final"):
-        meta = None  # nur fertig vertonte Videos anbieten
-    return {"running": yt_job["running"], "log": list(yt_job["log"]), "error": yt_job["error"],
-            "meta": meta, "url": yt_job.get("url", "")}
+async def youtube_job(slot: str = ""):
+    s = _slot(slot)
+    out = s.status()
+    if s is YT_FRIENDS and out["meta"] and out["meta"].get("finished"):
+        out["expires_in"] = max(0, int(out["meta"]["finished"] + FRIENDS_KEEP_SECONDS - time.time()))
+    return out
 
 
 @app.get("/api/youtube/video")
-async def youtube_video():
-    meta = _yt_meta()
-    path = YT_DIR / (meta or {}).get("final", "video_de.mp4")
-    if meta is None or not meta.get("final") or not path.is_file():
-        raise HTTPException(404, "Kein fertiges Video vorhanden.")
-    # FileResponse beherrscht Range-Anfragen -> Spulen im Browser
-    return FileResponse(path, media_type="video/mp4")
+async def youtube_video(slot: str = ""):
+    return _yt_file(_slot(slot), download=False)
 
 
 @app.get("/api/youtube/export")
-async def youtube_export():
+async def youtube_export(slot: str = ""):
     """Fertiges Video mit deutscher Tonspur herunterladen."""
-    meta = _yt_meta()
-    path = YT_DIR / (meta or {}).get("final", "video_de.mp4")
-    if meta is None or not meta.get("final") or not path.is_file():
-        raise HTTPException(404, "Kein fertiges Video vorhanden.")
-    title = re.sub(r"[^\w\-. ]+", "", meta.get("title") or "video").strip()[:80] or "video"
-    return FileResponse(path, media_type="video/mp4", filename=f"{title} (Deutsch KI).mp4")
+    return _yt_file(_slot(slot), download=True)
+
+
+@app.post("/api/youtube/eject")
+async def youtube_eject(slot: str = ""):
+    """Video samt Übersetzung verwerfen und vom Server löschen."""
+    return await _yt_eject(_slot(slot))
+
+
+# ------------------------------------- YouTube für die Freunde-Instanz
+def _friends_voice(key: str) -> str:
+    sync_clone_voices()
+    key = str(key or "")
+    ok = key in FRIENDS_LOCAL_VOICES or key in (config.get("shared_published") or [])
+    if not ok or key not in VOICES or not is_available(key):
+        raise HTTPException(403, "Diese Stimme ist für YouTube nicht freigegeben.")
+    return key
+
+
+@app.post("/api/share/youtube/prepare")
+async def share_youtube_prepare(request: Request, body: dict):
+    _check_share_token(request)
+    voice = _friends_voice(body.get("voice"))
+    pool = []
+    for k in (body.get("pool") or [])[:12]:
+        try:
+            pool.append(_friends_voice(k))
+        except HTTPException:
+            pass
+    return await _yt_start(YT_FRIENDS, body, voice, pool)
+
+
+@app.get("/api/share/youtube/job")
+async def share_youtube_job(request: Request):
+    _check_share_token(request)
+    out = YT_FRIENDS.status()
+    if out["meta"]:  # nur was die Anzeige braucht
+        m = out["meta"]
+        out["meta"] = {k: m.get(k) for k in ("id", "title", "channel", "duration", "language",
+                                              "source", "sped_up", "max_delay", "finished")}
+        out["meta"]["sentences"] = len(m.get("sentences") or [])
+    return out
+
+
+@app.get("/api/share/youtube/video")
+async def share_youtube_video(request: Request):
+    _check_share_token(request)
+    return _yt_file(YT_FRIENDS, download=False)
+
+
+@app.post("/api/share/youtube/eject")
+async def share_youtube_eject(request: Request):
+    _check_share_token(request)
+    return await _yt_eject(YT_FRIENDS)
+
+
+async def _friends_cleanup_loop() -> None:
+    """Videos der Freunde-Instanz nach 12 h löschen."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            meta = YT_FRIENDS.meta()
+            if (not YT_FRIENDS.job["running"] and meta and meta.get("finished")
+                    and time.time() - meta["finished"] > FRIENDS_KEEP_SECONDS):
+                YT_FRIENDS.wipe()
+                YT_FRIENDS.job["log"].clear()
+                YT_FRIENDS.job["url"] = ""
+                log.info("YouTube (freunde): Video nach 12 h gelöscht")
+        except Exception as exc:
+            log.warning("YouTube (freunde): Aufräumen fehlgeschlagen: %s", exc)
 
 
 @app.post("/api/emergency_stop")
 async def emergency_stop():
     """Not-Aus: alles Laufende sofort abbrechen – YouTube-Vorbereitung bzw.
-    -Vertonung, Testtexte, wartende Chat-Nachrichten, laufende Ansage – und
-    die Rechenprozesse frisch starten. Der Twitch-Chat bleibt verbunden;
-    neue Nachrichten werden danach normal vorgelesen."""
-    import signal
-
-    task = yt_job.get("task")
-    if task is not None and not task.done():
-        task.cancel()
-    proc = yt_job.get("proc")
-    if proc is not None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-    if yt_job.get("running"):
-        _yt_wipe()  # halbfertiges YouTube-Video verwerfen
-    yt_job.update(running=False, error=None, proc=None)
-    yt_job["log"].clear()
+    -Vertonung (beide Plätze), Testtexte, wartende Chat-Nachrichten, laufende
+    Ansage – und die Rechenprozesse frisch starten. Der Twitch-Chat bleibt
+    verbunden; neue Nachrichten werden danach normal vorgelesen."""
+    for slot in (YT_ADMIN, YT_FRIENDS):
+        was_running = slot.job.get("running")
+        await slot.kill()
+        if was_running:
+            slot.wipe()  # halbfertiges Video verwerfen
+        slot.job.update(running=False, error=None, proc=None)
+        slot.job["log"].clear()
     await speaker.emergency_clear()
     pools = await asyncio.to_thread(tts.kill_pools)
     audio_stream.paused = False
     await broadcaster.send({"type": "paused", "paused": False})
     log.warning("Not-Aus ausgelöst (%d Prozessgruppen beendet)", pools)
-    return {"ok": True}
-
-
-@app.post("/api/youtube/eject")
-async def youtube_eject():
-    """Video samt Übersetzung verwerfen und vom Server löschen."""
-    task = yt_job.get("task")
-    if task is not None and not task.done():
-        task.cancel()
-    proc = yt_job.get("proc")
-    if proc is not None:
-        import signal
-
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        await asyncio.sleep(0.3)
-    await speaker.cancel_test()
-    _yt_wipe()
-    yt_job.update(error=None)
-    yt_job["log"].clear()
     return {"ok": True}
 
 
@@ -611,6 +730,7 @@ async def warmup_on_start():
 
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=int(os.environ.get("APP_THREADS", "128") or 128)))
+    asyncio.create_task(_friends_cleanup_loop())
     if os.environ.get("QWEN_WARMUP", "1") == "0":
         return
     asyncio.create_task(asyncio.to_thread(tts.warmup, config.get("voice")))
