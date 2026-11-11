@@ -283,6 +283,98 @@ async def say_cancel():
     return {"ok": True}
 
 
+# ------------------------------------------------ YouTube neu vertonen
+# Gerechnet wird auf der Administrativ-Instanz (eigener Platz für diese
+# Instanz, höchstens 720p und 20 Minuten, nach 12 h gelöscht). Hier wird nur
+# weitergereicht – mit dem Schlüssel aus der Stimmen-Freigabe.
+def _admin() -> tuple[str, dict]:
+    url = (config.get("remote_url") or "").rstrip("/")
+    if not url or not config.get("remote_key"):
+        raise HTTPException(503, "YouTube ist noch nicht eingerichtet (keine Verbindung zur Administrativ-Instanz).")
+    return url, {"Authorization": f"Bearer {config.get('remote_key')}"}
+
+
+async def _admin_call(method: str, path: str, json_body: dict | None = None) -> dict:
+    import httpx
+
+    url, headers = _admin()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=5)) as client:
+            r = await client.request(method, f"{url}{path}", headers=headers, json=json_body)
+    except Exception as exc:
+        raise HTTPException(502, f"Administrativ-Instanz nicht erreichbar: {exc}")
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    if r.status_code != 200:
+        raise HTTPException(r.status_code if r.status_code < 500 else 502,
+                            data.get("detail") or f"Administrativ-Instanz: Fehler {r.status_code}")
+    return data
+
+
+@app.post("/api/youtube/prepare")
+async def youtube_prepare(body: dict):
+    voice = config.get("voice")
+    if not is_available(voice):
+        raise HTTPException(400, "Die eingestellte Stimme ist gerade nicht verfügbar.")
+    spec = remote.REGISTRY.get(voice) if remote.is_remote(voice) else None
+    admin_voice = spec["key"] if spec else voice
+    try:
+        height = min(int(body.get("height") or 720), 720)
+    except (TypeError, ValueError):
+        height = 720
+    payload = {"url": str(body.get("url") or "").strip(), "start": body.get("start") or "",
+               "end": body.get("end") or "", "height": height,
+               "original_level": body.get("original_level") or 0, "voice": admin_voice}
+    return await _admin_call("POST", "/api/share/youtube/prepare", payload)
+
+
+@app.get("/api/youtube/job")
+async def youtube_job():
+    return await _admin_call("GET", "/api/share/youtube/job")
+
+
+@app.post("/api/youtube/eject")
+async def youtube_eject():
+    return await _admin_call("POST", "/api/share/youtube/eject")
+
+
+@app.get("/api/youtube/video")
+async def youtube_video(request: Request):
+    """Video von der Administrativ-Instanz durchreichen (mit Range -> spulen)."""
+    import httpx
+
+    url, headers = _admin()
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
+    client = httpx.AsyncClient(timeout=httpx.Timeout(60, connect=5))
+    try:
+        req = client.build_request("GET", f"{url}/api/share/youtube/video", headers=headers)
+        r = await client.send(req, stream=True)
+    except Exception as exc:
+        await client.aclose()
+        raise HTTPException(502, f"Administrativ-Instanz nicht erreichbar: {exc}")
+    if r.status_code not in (200, 206):
+        await r.aclose()
+        await client.aclose()
+        raise HTTPException(404 if r.status_code == 404 else 502, "Kein fertiges Video vorhanden.")
+    out = {k: r.headers[k] for k in ("content-length", "content-range", "accept-ranges", "last-modified", "etag")
+           if k in r.headers}
+    out["Content-Disposition"] = "inline"
+    out["Cache-Control"] = "no-store"
+
+    async def body():
+        try:
+            async for chunk in r.aiter_raw():
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
+
+    return StreamingResponse(body(), status_code=r.status_code, media_type="video/mp4", headers=out)
+
+
 @app.post("/api/skip")
 async def skip():
     speaker.skip()

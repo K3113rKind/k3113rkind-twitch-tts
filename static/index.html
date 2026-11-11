@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>K3113rkind's Twitch TTS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <main class="panel">
@@ -60,6 +60,34 @@
       </select>
       <button id="say-delayed" type="button" class="btn-secondary" title="Erst die gewählte Anzahl Abschnitte (oder alles) rechnen, dann ohne Pausen vorlesen">Verzögert vorlesen</button>
       <button id="say-cancel" type="button" class="btn-secondary" title="Vorlesen des Textes abbrechen">■ Stopp</button>
+    </div>
+  </section>
+
+  <section class="group" id="yt-section">
+    <label>YouTube neu vertonen <span class="muted">(Video laden, übersetzen und mit der eingestellten Stimme neu vertonen – höchstens 20 Minuten, wird nach 12 Stunden gelöscht)</span></label>
+    <input id="yt-url" class="yt-url" type="url" placeholder="YouTube-Link einfügen …" autocomplete="off">
+    <div class="actions yt-times">
+      <input id="yt-start" type="text" inputmode="numeric" placeholder="Start (z. B. 1:30) – leer = Anfang" autocomplete="off">
+      <input id="yt-end" type="text" inputmode="numeric" placeholder="Ende (z. B. 4:15) – leer = Schluss" autocomplete="off">
+    </div>
+    <div class="actions">
+      <select id="yt-height" title="Höchste Auflösung, in der das Video geladen wird">
+        <option value="360">360p</option>
+        <option value="480">480p</option>
+        <option value="720" selected>720p</option>
+      </select>
+      <select id="yt-orig" title="Originalton leise unter der deutschen Spur lassen (Musik, Geräusche)">
+        <option value="0">Original: aus</option>
+        <option value="0.1">Original: 10 %</option>
+        <option value="0.2">Original: 20 %</option>
+        <option value="0.3">Original: 30 %</option>
+      </select>
+      <button id="yt-load" type="button" class="btn-secondary">Laden &amp; vertonen</button>
+    </div>
+    <p id="yt-info" class="hint hidden"></p>
+    <div id="yt-wrap" class="yt-wrap hidden"><video id="yt-video" controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata"></video></div>
+    <div class="actions">
+      <button id="yt-eject" type="button" class="btn-secondary hidden" title="Bearbeitung abbrechen bzw. Video vom Server löschen">⏏ Auswerfen</button>
     </div>
   </section>
 
@@ -127,5 +155,6 @@
   </details>
 </main>
 <script src="/static/app.js?v=6"></script>
+<script src="/static/youtube.js?v=1"></script>
 </body>
 </html>

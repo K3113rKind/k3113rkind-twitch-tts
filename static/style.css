@@ -242,3 +242,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 #say-text { font-family: inherit; font-size: 0.95rem; }
 .say-count { text-align: right; font-size: 0.8rem; margin: 0.2rem 0 0.5rem; }
 #say-section .actions select { flex: 0 0 auto; width: auto; }
+
+/* YouTube neu vertonen */
+#yt-section .yt-url { display: block; width: 100%; box-sizing: border-box; margin-top: 0.6rem; }
+#yt-section .actions { margin-top: 0.5rem; }
+#yt-section .actions select, #yt-section .actions button, #yt-section .yt-times input { flex: 1; min-width: 0; }
+.yt-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 0.6rem 0; background: #000; border-radius: 6px; overflow: hidden; }
+.yt-wrap video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; }
