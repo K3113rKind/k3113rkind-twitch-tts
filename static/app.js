@@ -180,7 +180,25 @@ async function refreshStatus() {
   applyStatus(await fetch("/api/status").then((r) => r.json()));
 }
 
+// Die Liste kommt alle paar Sekunden mit dem Status. Neu aufbauen nur, wenn
+// sie sich geändert hat, und nie, während die Auswahl offen ist – sonst
+// springt die geöffnete Liste (iPhone) ständig zur gewählten Stimme zurück.
+let pendingVoices = null;
+el.voice.addEventListener("blur", () => {
+  if (pendingVoices) { const v = pendingVoices; pendingVoices = null; fillVoices(v); }
+});
 function fillVoices(voices) {
+  const sig = JSON.stringify(voices);
+  const open = document.activeElement === el.voice;
+  if (el.voice.dataset.sig === sig) {
+    // unverändert: nur eine anderswo geänderte Auswahl übernehmen (nicht bei offener Liste)
+    const want = el.voice.dataset.selected;
+    if (!open && want && el.voice.value !== want && voices.some((v) => v.key === want)) el.voice.value = want;
+    renderVoicePool(voices);
+    return;
+  }
+  if (open) { pendingVoices = voices; return; }
+  el.voice.dataset.sig = sig;
   const selected = el.voice.dataset.selected || el.voice.value;
   el.voice.innerHTML = "";
   for (const v of voices) {
