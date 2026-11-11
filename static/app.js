@@ -1112,7 +1112,14 @@ async function loadCloneList() {
       }
       // Liste/Dropdown aktualisiert die voices_changed-Nachricht
     });
-    li.append(name, meta, cands, ren, btn);
+    // Export: ZIP mit Aufnahme (wav) + Text (txt), ggf. Kokoro-Paket
+    const exp = document.createElement("a");
+    exp.className = "btn-export";
+    exp.textContent = "Export";
+    exp.title = "Aufnahme + Text als ZIP herunterladen";
+    exp.href = `/api/clone/voices/${encodeURIComponent(v.name)}/export`;
+    exp.setAttribute("download", `stimme-${v.name}.zip`);
+    li.append(name, meta, cands, ren, exp, btn);
     el.cloneList.append(li);
   }
 }

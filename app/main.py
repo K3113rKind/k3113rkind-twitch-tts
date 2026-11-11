@@ -807,6 +807,28 @@ async def clone_voices():
     return out
 
 
+@app.get("/api/clone/voices/{name}/export")
+async def clone_export(name: str):
+    """Eigene Stimme als ZIP: NAME.wav + NAME.txt (Referenz, so wie Qwen und
+    Pocket sie nutzen), dazu das Kokoro-Paket kokoro/NAME.pt, falls vorhanden."""
+    import io
+    import zipfile
+
+    name = name.strip().lower()
+    folder = ref_dir()
+    if not CLONE_NAME.match(name) or not (folder / f"{name}.wav").exists():
+        raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path, arc in ((folder / f"{name}.wav", f"{name}.wav"),
+                          (folder / f"{name}.txt", f"{name}.txt"),
+                          (folder / "kokoro" / f"{name}.pt", f"kokoro/{name}.pt")):
+            if path.is_file():
+                zf.write(path, arc)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={**NO_CACHE, "Content-Disposition": f'attachment; filename="stimme-{name}.zip"'})
+
+
 @app.post("/api/clone/voices/{name}/rename")
 async def clone_rename(name: str, body: dict):
     """Eigene Stimme richtig umbenennen: Referenz (wav/txt), Kokoro-Paket,

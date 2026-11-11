@@ -254,8 +254,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .clone-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
 .clone-list li:last-child { border-bottom: 0; }
 .clone-list .name { font-weight: 600; }
+.clone-list a.btn-export { text-decoration: none; font-size: 13.33px; line-height: normal; }
 .clone-list .meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clone-list button {
+.clone-list button, .clone-list a.btn-export {
   padding: 0.3rem 0.8rem; background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; color: var(--text); cursor: pointer; white-space: nowrap;
 }
