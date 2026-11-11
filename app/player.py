@@ -214,8 +214,8 @@ class ChatSpeaker:
 
         result = await asyncio.to_thread(self.tts.synthesize, text, voice, cfg["speed"])
         samples = result.samples
-        if cfg.get("loudness_norm", True):
-            samples = loudness.normalize(samples, getattr(result, "sample_rate", 24000))
+        # Einheitliche Lautstärke ist hier immer an (kein Schalter in der GUI)
+        samples = loudness.normalize(samples, getattr(result, "sample_rate", 24000))
 
         self._current_id += 1
         utterance_id = self._current_id
