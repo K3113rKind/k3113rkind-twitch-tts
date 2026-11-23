@@ -80,6 +80,36 @@ def _big_workers_default() -> int:
     return max(1, int((gb - 6) // 8)) if gb else 2
 
 
+def _mem_available_gb() -> float | None:
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / 2**20
+    except OSError:
+        pass
+    return None
+
+
+# Speicherbedarf je geladenem Modell und Prozess (Schätzung, GB) – für den
+# RAM-Wächter beim Warmhalten mehrerer Modelle
+def model_gb(model) -> float:
+    m = str(model or "")
+    if "1.7B" in m:
+        return 10.0
+    if "0.6B" in m:
+        return 3.5
+    return 2.0  # Pocket
+
+
+# Budget für alle Rechenprozesse zusammen: QWEN_RAM_GB (z. B. 190), sonst
+# erkannter Arbeitsspeicher; RAM_RESERVE_GB bleibt frei für App & Co.
+RAM_RESERVE_GB = float(os.environ.get("RAM_RESERVE_GB", "10") or 10)
+
+
+def ram_budget_gb() -> float:
+    return float(os.environ.get("QWEN_RAM_GB", "0") or 0) or _mem_total_gb()
+
+
 # Leer/0 = automatisch nach Arbeitsspeicher
 QWEN_WORKERS_BIG = int(os.environ.get("QWEN_WORKERS_BIG", "0") or 0) or _big_workers_default()
 
@@ -98,9 +128,12 @@ def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
 
     from .tts import QwenEngine
 
-    engine = QwenEngine()
+    # Mehrere Modelle je Prozess möglich (Einstellung "Modelle warm halten"):
+    # je Modell eine eigene Engine. Welche bleiben, entscheidet der
+    # Hauptprozess – zum Freigeben startet er den Prozess neu.
+    engines: dict = {}
     current = [0]
-    wrapped = [None]
+    wrapped: set = set()
 
     def follow_share() -> None:
         n = share.value
@@ -108,10 +141,10 @@ def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
             torch.set_num_threads(n)
             current[0] = n
 
-    def wrap_model() -> None:
+    def wrap_model(engine) -> None:
         """Vor jedem Schritt von Talker und Code-Predictor den Anteil prüfen."""
         model = engine._model
-        if model is None or wrapped[0] is model:
+        if model is None or id(model) in wrapped:
             return
         talker = model.model.talker
         for mod in (talker.model, talker.code_predictor.model):
@@ -122,7 +155,7 @@ def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
                 return _orig(*a, **k)
 
             mod.forward = forward
-        wrapped[0] = model
+        wrapped.add(id(model))
     while True:
         job = inq.get()
         if job is None:
@@ -130,8 +163,11 @@ def _worker_main(idx: int, inq, outq, share, engine_name: str = "qwen") -> None:
         jid, args = job
         try:
             t0 = time.perf_counter()
+            engine = engines.get(args["repo"])
+            if engine is None:
+                engine = engines[args["repo"]] = QwenEngine()
             engine.load(args["repo"])
-            wrap_model()
+            wrap_model(engine)
             load_s = time.perf_counter() - t0
             follow_share()
             t1 = time.perf_counter()
@@ -149,7 +185,7 @@ def _pocket_worker(inq, outq) -> None:
     """Pocket TTS in einem eigenen Prozess."""
     from .pocket import PocketEngine
 
-    engine = PocketEngine()
+    engines: dict = {}  # je Modell (Sprache) eine Engine, siehe oben
     while True:
         job = inq.get()
         if job is None:
@@ -157,6 +193,9 @@ def _pocket_worker(inq, outq) -> None:
         jid, args = job
         try:
             t0 = time.perf_counter()
+            engine = engines.get(args["language"])
+            if engine is None:
+                engine = engines[args["language"]] = PocketEngine()
             engine.load(args["language"])
             load_s = time.perf_counter() - t0
             t1 = time.perf_counter()
@@ -187,9 +226,18 @@ class QwenPool:
         self._waiting: list[tuple] = []  # (Priorität, Ticket, erlaubte Prozesse)
         self._ticket = 0
         self._started = False
-        # welches Modell (Qwen: Repo, Pocket: Sprache) jeder Prozess geladen hat
-        self._loaded: list = [None] * workers
+        # welche Modelle (Qwen: Repo, Pocket: Sprache) jeder Prozess geladen
+        # hat – zuletzt benutztes am Ende
+        self._loaded: list[list] = [[] for _ in range(workers)]
         self._recycling: set[int] = set()
+        # Modelle je Prozess warm halten (1 = wie früher: nur eins)
+        self.keep = 1
+        # Modell der Standardstimme: wird als Letztes verdrängt und nach einem
+        # Neustart des Prozesses im Hintergrund wieder geladen
+        self.pinned = None
+        self.pin_args: dict | None = None
+        # alle Pools teilen sich den RAM -> von außen gesetzt (tts)
+        self.ram_used_other = lambda: 0.0
 
     # ------------------------------------------------------------ Verwaltung
     def start(self) -> None:
@@ -291,7 +339,7 @@ class QwenPool:
             for i, p in enumerate(self._procs):
                 if p is None or p.is_alive() or i in self._recycling:
                     continue
-                self._loaded[i] = None
+                self._loaded[i] = []
                 log.error("%s-Rechenprozess %d beendet (Code %s) – wird neu gestartet",
                           self.engine, i + 1, p.exitcode)
                 for jid, (fut, wi) in list(self._futures.items()):
@@ -306,7 +354,7 @@ class QwenPool:
         Nur so wird der Speicher eines entladenen Modells sicher frei – im
         Prozess selbst behielten PyTorch/glibc ihn (Modellwechsel 1.7B -> 0.6B,
         Pocket german -> 24L: RAM wuchs bei jedem Wechsel)."""
-        old_model = self._loaded[i]
+        old_model = ", ".join(map(str, self._loaded[i])) or None
         p, q = self._procs[i], self._inqs[i]
         try:
             q.put(None)
@@ -318,11 +366,41 @@ class QwenPool:
             log.warning("%s-Rechenprozess %d ließ sich nicht sauber beenden: %s",
                         self.engine, i + 1, exc)
         with self._cond:
-            self._loaded[i] = None
+            self._loaded[i] = []
             self._spawn(i)
             self._recycling.discard(i)
         log.info("%s-Rechenprozess %d neu gestartet für Modellwechsel (%s -> %s), Speicher frei",
                  self.engine, i + 1, old_model, new_model)
+
+    def ram_used(self) -> float:
+        return sum(model_gb(m) for lst in self._loaded for m in lst)
+
+    def _fits(self, model) -> bool:
+        """Passt ein weiteres Modell in den RAM? (Schätzung + freier Speicher)"""
+        if self.keep <= 1:
+            return False
+        need = model_gb(model)
+        budget = ram_budget_gb()
+        if budget and self.ram_used() + self.ram_used_other() + need + RAM_RESERVE_GB > budget:
+            return False
+        avail = _mem_available_gb()
+        return avail is None or avail >= need + 2
+
+    def _repin_later(self, i: int, model) -> None:
+        """Nach dem Neustart eines Prozesses die Standardstimme dort wieder
+        laden (im Hintergrund, hinter allen anderen Aufträgen)."""
+        if self.keep <= 1 or not self.pin_args or self.pinned in (None, model):
+            return
+        args = dict(self.pin_args, _pin=True)
+
+        def run() -> None:
+            try:
+                with_priority((time.monotonic() + 86400, 0), self.submit, args, i)
+            except Exception as exc:
+                log.info("%s: Standardstimme in Prozess %d nicht wieder geladen: %s",
+                         self.engine, i + 1, exc)
+
+        threading.Thread(target=run, name=f"{self.engine}-repin-{i + 1}", daemon=True).start()
 
     def _rebalance(self) -> None:
         """Threads auf die gerade rechnenden Prozesse verteilen (unter _cond)."""
@@ -372,20 +450,37 @@ class QwenPool:
                 self._cond.notify_all()
             model = args.get("repo") or args.get("language")
             free = self._idle & allowed
-            same = {w for w in free if self._loaded[w] == model}
-            # lieber einen Prozess, der das Modell schon hat; sonst einen leeren
-            empty = {w for w in free if self._loaded[w] is None}
-            i = min(same or empty or free)
+            same = {w for w in free if model in self._loaded[w]}
+            # lieber einen Prozess, der das Modell schon hat; sonst einen leeren;
+            # sonst einen mit Platz für ein weiteres Modell (Warmhalten, wenn
+            # der RAM reicht); sonst neu starten – bevorzugt einen Prozess
+            # ohne die Standardstimme
+            empty = {w for w in free if not self._loaded[w]}
+            room = {w for w in free if 0 < len(self._loaded[w]) < self.keep} if self._fits(model) else set()
+            unpinned = {w for w in free if self.pinned not in self._loaded[w]}
+            i = min(same or empty or room or unpinned or free)
             self._idle.discard(i)
-            recycle = model is not None and self._loaded[i] not in (None, model)
+            recycle = model is not None and model not in self._loaded[i] and bool(self._loaded[i]) \
+                and i not in room
+            if recycle and args.get("_pin"):
+                # Standardstimme nachladen nur, wenn sie dazupasst – nie dafür
+                # das gerade gebrauchte Modell wieder verdrängen
+                self._idle.add(i)
+                self._cond.notify_all()
+                return None
             if recycle:
                 self._recycling.add(i)
             self._rebalance()
         try:
             if recycle:
                 self._recycle(i, model)
+                self._repin_later(i, model)
             with self._cond:
-                self._loaded[i] = model
+                lst = self._loaded[i]
+                if model in lst:
+                    lst.remove(model)
+                if model is not None:
+                    lst.append(model)
                 jid = self._next_id
                 self._next_id += 1
                 fut: Future = Future()

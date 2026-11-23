@@ -29,6 +29,10 @@ services:
       # Je Prozess ca. 3 GB RAM (0.6B); 1.7B nur auf QWEN_WORKERS_BIG Prozessen (0 = automatisch nach RAM, ~8 GB je Prozess).
       - QWEN_WORKERS=${QWEN_WORKERS:-1}
       - QWEN_WORKERS_BIG=${QWEN_WORKERS_BIG:-0}
+      # RAM-Budget für alle Rechenprozesse beim Warmhalten mehrerer Modelle
+      # (GB, 0 = automatisch erkannt) und Reserve für App & Co.
+      - QWEN_RAM_GB=${QWEN_RAM_GB:-0}
+      - RAM_RESERVE_GB=${RAM_RESERVE_GB:-10}
       # Füllzeichen hinter dem Satzende gegen verschluckte letzte Laute (1 = an)
       - QWEN_END_FIX=${QWEN_END_FIX:-0}
       # Eigene Stimmen schneller, aber ungenauer (nur Stimm-Fingerabdruck, 1 = an)

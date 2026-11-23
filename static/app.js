@@ -341,7 +341,31 @@ let pendingVoices = null;
 el.voice.addEventListener("blur", () => {
   if (pendingVoices) { const v = pendingVoices; pendingVoices = null; fillVoices(v); }
 });
+// Standardstimme: nur Qwen-/Pocket-Stimmen (Kokoro ist ohnehin sofort da)
+function fillStandardVoices(voices) {
+  const sel = $("standard_voice");
+  if (!sel || document.activeElement === sel) return;
+  const list = voices.filter((v) => v.qwen || v.pocket);
+  const sig = JSON.stringify(list.map((v) => [v.key, v.label]));
+  if (sel.dataset.sig === sig) return;
+  sel.dataset.sig = sig;
+  const want = sel.dataset.selected || sel.value;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "– keine –";
+  sel.append(none);
+  for (const v of list) {
+    const o = document.createElement("option");
+    o.value = v.key;
+    o.textContent = v.label;
+    sel.append(o);
+  }
+  sel.value = list.some((v) => v.key === want) ? want : "";
+}
+
 function fillVoices(voices) {
+  fillStandardVoices(voices);
   const sig = JSON.stringify(voices);
   const open = document.activeElement === el.voice;
   if (el.voice.dataset.sig === sig) {
@@ -478,6 +502,8 @@ function collectConfig() {
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
     pronunciations: $("pronunciations").value,
+    warm_models: Number($("warm_models").value),
+    standard_voice: $("standard_voice").value,
     qwen_temperature: parseFloat(el.temperature.value),
     qwen_style: el.style.value,
     qwen_tempo: el.tempo.value,
@@ -520,6 +546,9 @@ function applyConfig(c) {
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
   $("pronunciations").value = c.pronunciations || "";
+  $("warm_models").value = String(c.warm_models || 2);
+  $("standard_voice").dataset.selected = c.standard_voice || "";
+  $("standard_voice").value = c.standard_voice || "";
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
   el.style.value = c.qwen_style || "neutral";
@@ -708,6 +737,11 @@ el.sayBtn.addEventListener("click", () => sayTest("direct"));
 el.sayDelayed.addEventListener("click", () => sayTest(el.sayPrebuffer.value));
 // Aussprache-Liste: speichern bei Änderung, Probe mit der eingestellten Stimme
 $("pronunciations").addEventListener("change", saveConfig);
+$("warm_models").addEventListener("change", saveConfig);
+$("standard_voice").addEventListener("change", () => {
+  $("standard_voice").dataset.selected = $("standard_voice").value;
+  saveConfig();
+});
 $("pron-play").addEventListener("click", () => sayTest("direct", $("pron-test").value));
 $("pron-test").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") { ev.preventDefault(); sayTest("direct", $("pron-test").value); }

@@ -14,7 +14,8 @@ def _stub_pool(workers=4):
     p._cond = threading.Condition()
     p._waiting, p._ticket, p._idle, p._closed = [], 0, set(range(workers)), False
     p._futures, p._next_id = {}, 0
-    p._loaded, p._recycling = [None] * workers, set()
+    p._loaded, p._recycling = [[] for _ in range(workers)], set()
+    p.keep, p.pinned, p.pin_args, p.ram_used_other = 1, None, None, (lambda: 0.0)
     started = []
 
     class Q:
@@ -64,8 +65,8 @@ def test_model_switch_restarts_worker():
 
     p._procs = [P(), P()]
     p._spawn = lambda i: (spawned.append(i), p._procs.__setitem__(i, P()))
-    p._loaded = ["1.7B", "1.7B"]
+    p._loaded = [["1.7B"], ["1.7B"]]
     for w in (0, 1):
         p.submit({"n": w, "repo": "0.6B"}, worker=w)
     assert sorted(spawned) == [0, 1]
-    assert p._loaded == ["0.6B", "0.6B"]
+    assert p._loaded == [["0.6B"], ["0.6B"]]

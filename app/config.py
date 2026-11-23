@@ -55,6 +55,10 @@ DEFAULTS: dict[str, Any] = {
     # oder "eigen" mit freiem Text in qwen_style_custom)
     "qwen_style": "neutral",
     "qwen_style_custom": "",
+    # Modelle je Rechenprozess warm halten (1–3) und Standardstimme, die im
+    # Hintergrund warm bleibt und nach einem Neustart aufgewärmt wird
+    "warm_models": 2,
+    "standard_voice": "",
     # Aussprache-Liste: eine Regel pro Zeile, "Wort = so gesprochen"
     "pronunciations": "",
     # Sprechtempo eigener Qwen-Stimmen: Verfahren (siehe klang.METHODS)
@@ -166,6 +170,10 @@ class ConfigStore:
                     continue
             elif key == "qwen_style_custom":
                 value = str(value).strip()[:300]
+            elif key == "warm_models":
+                value = max(1, min(3, int(value)))
+            elif key == "standard_voice":
+                value = str(value or "").strip()[:120]
             elif key == "pronunciations":
                 value = str(value).replace("\r", "").strip()[:20000]
             elif key == "qwen_temperature":

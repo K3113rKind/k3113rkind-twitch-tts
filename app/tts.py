@@ -607,6 +607,10 @@ class TTS:
 
         self._workers: dict[str, int] = {"qwen": QWEN_WORKERS, "pocket": 1}
         self._pool_lock = threading.Lock()
+        # Modelle je Rechenprozess warm halten (Einstellung "warm_models") und
+        # Standardstimme, die im Hintergrund warm bleibt (je Engine: Modell, Auftrag)
+        self.keep_models = 2
+        self._pins: dict[str, tuple] = {}
         from collections import OrderedDict
 
         self._qwen_cache: OrderedDict = OrderedDict()
@@ -844,7 +848,45 @@ class TTS:
 
                 threads = POCKET_THREADS
             pool = self._pools[engine] = QwenPool(n, threads, engine=engine)
+            self._setup_pool(engine, pool)
             return pool
+
+    def _setup_pool(self, engine: str, pool) -> None:
+        pool.keep = self.keep_models
+        pool.pinned, pool.pin_args = self._pins.get(engine, (None, None))
+        pool.ram_used_other = lambda me=pool: sum(
+            p.ram_used() for p in list(self._pools.values()) if p is not me and hasattr(p, "ram_used"))
+
+    def set_keep_models(self, n: int) -> None:
+        """Wie viele Modelle je Rechenprozess warm bleiben (1–3). Weniger als
+        vorher: überzählige verschwinden beim nächsten Modellwechsel."""
+        self.keep_models = max(1, min(3, int(n)))
+        with self._pool_lock:
+            for engine, pool in self._pools.items():
+                if hasattr(pool, "keep"):
+                    pool.keep = self.keep_models
+
+    def set_standard_voice(self, voice_key: str | None) -> None:
+        """Standardstimme: ihr Modell wird als Letztes verdrängt und nach einem
+        Prozess-Neustart im Hintergrund wieder geladen."""
+        self._pins = {}
+        try:
+            if voice_key and voices_mod.is_available(voice_key):
+                spec = voices_mod.VOICES[voice_key]
+                if voices_mod.is_pocket(voice_key):
+                    self._pins["pocket"] = (spec["language"], dict(
+                        text="Hallo.", language=spec["language"], voice=spec.get("voice"),
+                        ref_wav=spec.get("ref_wav")))
+                elif voices_mod.is_qwen(voice_key):
+                    self._pins["qwen"] = (spec["model"], dict(
+                        repo=spec["model"], speaker=spec.get("speaker"), ref_wav=spec.get("ref_wav"),
+                        ref_txt=spec.get("ref_txt"), text=WARMUP_TEXTS[0]))
+        except Exception as exc:
+            log.warning("Standardstimme %s nicht nutzbar: %s", voice_key, exc)
+        with self._pool_lock:
+            for engine, pool in self._pools.items():
+                if hasattr(pool, "pinned"):
+                    pool.pinned, pool.pin_args = self._pins.get(engine, (None, None))
 
     def set_workers(self, engine: str, count: int, restart: bool = True) -> None:
         """Anzahl der Rechenprozesse setzen; laufende Prozesse werden beendet

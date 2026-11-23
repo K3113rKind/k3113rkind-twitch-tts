@@ -132,7 +132,15 @@ async def get_config():
 @app.put("/api/config")
 async def put_config(changes: dict):
     try:
+        before = (config.get("warm_models"), config.get("standard_voice"))
         config.update(changes)
+        after = (config.get("warm_models"), config.get("standard_voice"))
+        if after[0] != before[0]:
+            tts.set_keep_models(after[0])
+        if after != before:
+            tts.set_standard_voice(after[1])
+            if after[1] and after[1] != before[1] and tts.keep_models > 1 and not tts.warming:
+                asyncio.create_task(asyncio.to_thread(tts.warmup, after[1]))
         return _public_config()
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Ungültiger Wert: {exc}")
@@ -251,7 +259,8 @@ async def warmup_voice(body: dict):
     if not is_qwen(voice):
         return {"ok": False}
     current = config.get("voice")
-    if (state["twitch"] is not None and is_available(current) and is_qwen(current)
+    # Mehrere Modelle warm: zusätzliches Laden verdrängt das laufende nicht
+    if (tts.keep_models <= 1 and state["twitch"] is not None and is_available(current) and is_qwen(current)
             and VOICES[current].get("model") != VOICES[voice].get("model")):
         return {"ok": False, "reason": "chat"}
     asyncio.create_task(asyncio.to_thread(tts.warmup, voice))
@@ -642,6 +651,12 @@ async def emergency_stop():
         slot.job["log"].clear()
     await speaker.emergency_clear()
     pools = await asyncio.to_thread(tts.kill_pools)
+
+    async def rewarm() -> None:  # Standardstimme gleich wieder bereithalten
+        await asyncio.sleep(3)
+        await asyncio.to_thread(_warm_defaults, False)
+    if config.get("standard_voice") and os.environ.get("QWEN_WARMUP", "1") != "0":
+        asyncio.create_task(rewarm())
     audio_stream.paused = False
     await broadcaster.send({"type": "paused", "paused": False})
     log.warning("Not-Aus ausgelöst (%d Prozessgruppen beendet)", pools)
@@ -733,9 +748,26 @@ async def warmup_on_start():
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=int(os.environ.get("APP_THREADS", "128") or 128)))
     asyncio.create_task(_friends_cleanup_loop())
+    tts.set_keep_models(config.get("warm_models") or 2)
     if os.environ.get("QWEN_WARMUP", "1") == "0":
         return
-    asyncio.create_task(asyncio.to_thread(tts.warmup, config.get("voice")))
+    asyncio.create_task(asyncio.to_thread(_warm_defaults, True))
+
+
+def _warm_defaults(with_current: bool) -> None:
+    """Standardstimme aufwärmen (bleibt im Hintergrund warm) und – nach dem
+    Start – die zuletzt gewählte Stimme. Diese zuletzt, damit sie bei nur
+    einem warmen Modell die aktive ist."""
+    std = config.get("standard_voice") or ""
+    tts.set_standard_voice(std)
+    current = config.get("voice")
+    order = []
+    if std and is_available(std) and (tts.keep_models > 1 or not with_current or std == current):
+        order.append(std)
+    if with_current and current and current not in order:
+        order.append(current)
+    for voice in order:
+        tts.warmup(voice)
 
 
 # ------------------------------------------------- eigene Stimme erzeugen
