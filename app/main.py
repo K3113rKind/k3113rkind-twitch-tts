@@ -1413,6 +1413,11 @@ async def share_synthesize(request: Request, body: dict):
         raise HTTPException(400, "Kein Text.")
     if voice not in (config.get("shared_published") or []):
         raise HTTPException(403, "Diese Stimme ist nicht freigegeben.")
+    return await _synthesize_wav(voice, text, speed, "Freigabe")
+
+
+async def _synthesize_wav(voice: str, text: str, speed: float, source: str) -> Response:
+    """Text komplett erzeugen und als WAV (mono, 16 bit) liefern."""
     sync_clone_voices()
     if voice not in VOICES or not is_available(voice):
         raise HTTPException(404, "Stimme hier nicht verfügbar.")
@@ -1433,7 +1438,7 @@ async def share_synthesize(request: Request, body: dict):
             else:
                 results = [await j for j in jobs]
         except Exception as exc:
-            log.warning("Freigabe: %s fehlgeschlagen: %s", voice, exc)
+            log.warning("%s: %s fehlgeschlagen: %s", source, voice, exc)
             raise HTTPException(500, f"Erzeugung fehlgeschlagen: {exc}")
     sr = results[0].sample_rate
     gap = np.zeros(int(sr * PAUSE_BETWEEN_CHUNKS_S), dtype=np.float32)
@@ -1449,8 +1454,38 @@ async def share_synthesize(request: Request, body: dict):
         w.setsampwidth(2)
         w.setframerate(sr)
         w.writeframes(pcm.tobytes())
-    log.info("Freigabe: %s, %d Zeichen in %.1f s", voice, len(text), time.perf_counter() - t0)
+    log.info("%s: %s, %d Zeichen in %.1f s", source, voice, len(text), time.perf_counter() - t0)
     return Response(buf.getvalue(), media_type="audio/wav")
+
+
+# ------------------------------------- Zugang für tts-chat (eigenes Projekt)
+# Eigener Schlüssel (Umgebungsvariable CHAT_TOKEN), getrennt von der Freigabe
+# für die Freunde-Instanz. Erlaubt ALLE hier verfügbaren Stimmen, auch private
+# – deshalb nur im LAN und nur für das eigene tts-chat verwenden.
+def _check_chat_token(request: Request) -> None:
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    expected = os.environ.get("CHAT_TOKEN", "")
+    if not token or not expected or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, "Ungültiger Schlüssel.")
+
+
+@app.get("/api/chat-tts/voices")
+async def chat_tts_voices(request: Request):
+    _check_chat_token(request)
+    return {"voices": await asyncio.to_thread(_voice_list, sorted(VOICES))}
+
+
+@app.post("/api/chat-tts/synthesize")
+async def chat_tts_synthesize(request: Request, body: dict):
+    """Text mit beliebiger verfügbarer Stimme erzeugen, Antwort: WAV (mono, 16 bit)."""
+    _check_chat_token(request)
+    voice = str(body.get("voice") or "")
+    text = str(body.get("text") or "").strip()[:4000]
+    speed = min(max(float(body.get("speed") or 1.0), 0.5), 2.0)
+    if not text:
+        raise HTTPException(400, "Kein Text.")
+    return await _synthesize_wav(voice, text, speed, "tts-chat")
 
 
 training_job: dict = {"running": False, "name": None, "done": 0, "total": 0, "error": None}
