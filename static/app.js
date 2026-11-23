@@ -477,6 +477,7 @@ function collectConfig() {
     cooldown_seconds: parseInt(el.cooldown.value || "0", 10),
     queue_limit: parseInt(el.queueLimit.value || "1", 10),
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
+    pronunciations: $("pronunciations").value,
     qwen_temperature: parseFloat(el.temperature.value),
     qwen_style: el.style.value,
     qwen_tempo: el.tempo.value,
@@ -518,6 +519,7 @@ function applyConfig(c) {
   el.cooldown.value = c.cooldown_seconds;
   el.queueLimit.value = c.queue_limit;
   el.blocklist.value = c.bot_blocklist.join("\n");
+  $("pronunciations").value = c.pronunciations || "";
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
   el.style.value = c.qwen_style || "neutral";
@@ -704,10 +706,16 @@ function updateSayButton() {
 
 el.sayBtn.addEventListener("click", () => sayTest("direct"));
 el.sayDelayed.addEventListener("click", () => sayTest(el.sayPrebuffer.value));
+// Aussprache-Liste: speichern bei Änderung, Probe mit der eingestellten Stimme
+$("pronunciations").addEventListener("change", saveConfig);
+$("pron-play").addEventListener("click", () => sayTest("direct", $("pron-test").value));
+$("pron-test").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); sayTest("direct", $("pron-test").value); }
+});
 
-async function sayTest(prebuffer) {
-  const text = el.sayText.value.trim();
-  if (!text) { el.sayText.focus(); return; }
+async function sayTest(prebuffer, override) {
+  const text = (override !== undefined ? override : el.sayText.value).trim();
+  if (!text) { (override !== undefined ? $("pron-test") : el.sayText).focus(); return; }
   if (running) return;
   ensureAudio(); // Nutzer-Geste: löst die Autoplay-Sperre des Browsers
   sayBusy = true;

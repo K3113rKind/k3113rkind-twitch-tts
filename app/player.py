@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from .config import ConfigStore
 from . import thirdparty_emotes
 from .processing import clean_message, has_mention, is_speakable
+from .pronounce import speakable_name
 from .stream import AudioStream
 from .qwen_pool import with_priority
 from .tts import QWEN_FIRST_CHUNK_CHARS, TTS, split_for_qwen
@@ -435,8 +436,8 @@ class ChatSpeaker:
             if cfg["username_style"] == "sagt":
                 # Verb passend zur Sprache der gewählten Stimme
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
-                return f"{msg.username} {verb} {msg.text}"
-            return f"{msg.username}: {msg.text}"
+                return f"{speakable_name(msg.username)} {verb} {msg.text}"
+            return f"{speakable_name(msg.username)}: {msg.text}"
         return msg.text
 
     @staticmethod
@@ -461,8 +462,9 @@ class ChatSpeaker:
 
     @staticmethod
     def _is_name_chunk(chunk: str, msg: QueuedMessage) -> bool:
-        return not msg.raw and chunk.startswith(msg.username) and chunk.endswith(":") \
-            and len(chunk) <= len(msg.username) + 6
+        name = speakable_name(msg.username)
+        return not msg.raw and chunk.startswith(name) and chunk.endswith(":") \
+            and len(chunk) <= len(name) + 6
 
     def _message_chunks(self, msg: QueuedMessage, cfg, voice: str) -> list[str]:
         """Abschnitte einer Nachricht. Mit mehreren Rechenprozessen wird die
@@ -475,9 +477,9 @@ class ChatSpeaker:
                 and len(msg.text) >= NAME_SPLIT_MIN_CHARS):
             if cfg["username_style"] == "sagt":
                 verb = "sagt" if VOICES[voice]["lang"] == "d" else "says"
-                prefix = f"{msg.username} {verb}:"
+                prefix = f"{speakable_name(msg.username)} {verb}:"
             else:
-                prefix = f"{msg.username}:"
+                prefix = f"{speakable_name(msg.username)}:"
             return [prefix] + self._chunks(msg.text, voice)
         return self._chunks(self._spoken_text(msg, cfg, voice), voice)
 

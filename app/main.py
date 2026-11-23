@@ -23,6 +23,7 @@ from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile, We
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import pronounce
 from .config import ConfigStore
 from .player import PAUSE_BETWEEN_CHUNKS_S, Broadcaster, ChatSpeaker
 from .stream import AudioStream
@@ -63,6 +64,7 @@ class FreshStaticFiles(StaticFiles):
 app = FastAPI(title="K3113rkind's Twitch TTS")
 
 config = ConfigStore()
+pronounce.CONFIG = config  # Aussprache-Liste
 tts = TTS()
 for _engine, _count in (config.get("workers") or {}).items():
     if _engine in tts.POOL_ENGINES:

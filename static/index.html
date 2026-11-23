@@ -254,6 +254,15 @@
     <label>Bots, die ignoriert werden <span class="muted">(einer pro Zeile)</span>
       <textarea id="bot_blocklist" rows="5" spellcheck="false"></textarea>
     </label>
+
+    <label>Aussprache <span class="muted">(eine Regel pro Zeile: Wort = so gesprochen – gilt für alle Stimmen, Chat, Text und YouTube)</span>
+      <textarea id="pronunciations" rows="5" spellcheck="false" placeholder="Mouzakrobat = Mausakrobat&#10;Gaming = Geeming"></textarea>
+    </label>
+    <div class="actions">
+      <input id="pron-test" type="text" placeholder="Wort oder Satz zum Anhören, z. B. Mouzakrobat" autocomplete="off">
+      <button id="pron-play" type="button" class="btn-secondary" title="Mit der eingestellten Stimme vorlesen (wie die Textbox)">▶ Anhören</button>
+    </div>
+    <p class="hint">Nutzernamen werden zusätzlich automatisch getrennt: „MouzAkrobat“ → „Mouz Akrobat“, „xXGamer99Xx“ → „Gamer 99“. Eine Regel in der Liste geht vor.</p>
     </div>
 
     <div class="sub" id="workers-section">
@@ -314,7 +323,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=58"></script>
+<script src="/static/app.js?v=59"></script>
 <script src="/static/youtube.js?v=7"></script>
 </body>
 </html>

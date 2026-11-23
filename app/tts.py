@@ -649,6 +649,9 @@ class TTS:
 
     def has_result(self, text: str, voice_key: str, temperature=None, instruct=None) -> bool:
         """Liegt für diesen Text schon fertiges Audio bereit (Gruppe oder Cache)?"""
+        from . import pronounce
+
+        text = pronounce.apply(text)  # gleicher Schlüssel wie in synthesize()
         spec = voices_mod.VOICES.get(voice_key)
         if spec is None or not self._cached_path(voice_key):
             return False
@@ -736,6 +739,9 @@ class TTS:
         """Text vorab berechnen (blockierend, im Thread aufrufen) – für die
         parallelen Rechenprozesse. synthesize() holt das Ergebnis später ab
         oder wartet, bis es fertig ist."""
+        from . import pronounce
+
+        text = pronounce.apply(text)  # gleicher Schlüssel wie in synthesize()
         if voice_key not in voices_mod.VOICES or not self._cached_path(voice_key):
             return False
         spec = voices_mod.VOICES[voice_key]
@@ -1056,6 +1062,9 @@ class TTS:
     def synthesize(self, text: str, voice_key: str, speed: float = 1.0,
                    temperature: float | None = None,
                    instruct: str | None = None) -> SynthesisResult:
+        from . import pronounce
+
+        text = pronounce.apply(text)  # Aussprache-Liste – für alle Engines und Wege
         if voice_key.startswith("klon-"):
             voices_mod.sync_clone_voices()
         if voice_key not in voices_mod.VOICES:
