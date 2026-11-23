@@ -139,11 +139,36 @@ async def put_config(changes: dict):
             tts.set_keep_models(after[0])
         if after != before:
             tts.set_standard_voice(after[1])
-            if after[1] and after[1] != before[1] and tts.keep_models > 1 and not tts.warming:
-                asyncio.create_task(asyncio.to_thread(tts.warmup, after[1]))
         return _public_config()
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Ungültiger Wert: {exc}")
+
+
+@app.post("/api/standard_voice")
+async def apply_standard_voice(body: dict):
+    """Standardstimme übernehmen und gleich aufwärmen (leer = keine)."""
+    voice = str(body.get("voice") or "").strip()
+    if voice and not is_available(voice):
+        raise HTTPException(400, "Diese Stimme ist gerade nicht verfügbar.")
+    if voice and not (is_qwen(voice) or is_pocket(voice)):
+        raise HTTPException(400, "Als Standardstimme gehen Qwen- und Pocket-Stimmen (Kokoro ist ohnehin sofort bereit).")
+    config.update({"standard_voice": voice})
+    tts.set_standard_voice(voice)
+    if not voice:
+        return {"ok": True, "warming": False}
+
+    def warm() -> None:
+        for _ in range(600):  # läuft gerade ein anderes Aufwärmen: danach
+            if not tts.warming:
+                break
+            time.sleep(1)
+        tts.warmup(voice)
+
+    asyncio.create_task(asyncio.to_thread(warm))
+    note = "" if tts.keep_models > 1 else (
+        "Hinweis: Bei „Modelle warm halten: 1“ verdrängt das Aufwärmen die aktive Stimme, "
+        "wenn sie ein anderes Modell nutzt.")
+    return {"ok": True, "warming": True, "note": note}
 
 
 @app.get("/api/status")

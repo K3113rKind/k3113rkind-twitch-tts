@@ -280,6 +280,10 @@
         <select id="standard_voice"><option value="">– keine –</option></select>
       </label>
     </div>
+    <div class="actions">
+      <button id="standard-apply" type="button" class="btn-secondary">Übernehmen &amp; aufwärmen</button>
+      <span id="standard-info" class="muted"></span>
+    </div>
     <p class="hint">Warm halten gilt ab 2 Rechenprozessen: Jeder Prozess behält die zuletzt genutzten Modelle (z. B. Qwen 1.7B + 0.6B, eigene Stimme + Preset, Pocket + Pocket 24L), statt beim Wechsel neu zu laden. Stimmen desselben Modells bleiben ohnehin warm. RAM je Prozess und Modell grob: 1.7B ~10 GB, 0.6B ~3,5 GB, Pocket ~2 GB. Reicht der RAM nicht, wird wie früher erst freigeräumt. Die Standardstimme wird nach Neustart und Not-Aus aufgewärmt und als Letzte verdrängt.</p>
     <p class="hint">Mehrere Prozesse rechnen mehrere Chat-Nachrichten gleichzeitig – hilfreich, wenn sich bei vollem Chat eine Warteschlange bildet. Eine einzelne Nachricht wird dadurch nicht schneller. Jeder Prozess lädt das Modell selbst: Qwen 0.6B braucht ca. 3 GB RAM pro Prozess, 1.7B ca. 7–8 GB. „Anwenden“ startet die Prozesse neu, eine gerade gesprochene Nachricht wird dabei abgebrochen.</p>
     </div>
@@ -337,7 +341,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=61"></script>
+<script src="/static/app.js?v=62"></script>
 <script src="/static/youtube.js?v=7"></script>
 </body>
 </html>

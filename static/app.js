@@ -503,7 +503,6 @@ function collectConfig() {
     bot_blocklist: el.blocklist.value.split("\n").map((s) => s.trim()).filter(Boolean),
     pronunciations: $("pronunciations").value,
     warm_models: Number($("warm_models").value),
-    standard_voice: $("standard_voice").value,
     qwen_temperature: parseFloat(el.temperature.value),
     qwen_style: el.style.value,
     qwen_tempo: el.tempo.value,
@@ -548,6 +547,7 @@ function applyConfig(c) {
   $("pronunciations").value = c.pronunciations || "";
   $("warm_models").value = String(c.warm_models || 2);
   $("standard_voice").dataset.selected = c.standard_voice || "";
+  $("standard_voice").dataset.saved = c.standard_voice || "";
   $("standard_voice").value = c.standard_voice || "";
   voiceLabels = c.voice_labels || {};
   el.temperature.value = c.qwen_temperature ?? 0.9;
@@ -738,9 +738,38 @@ el.sayDelayed.addEventListener("click", () => sayTest(el.sayPrebuffer.value));
 // Aussprache-Liste: speichern bei Änderung, Probe mit der eingestellten Stimme
 $("pronunciations").addEventListener("change", saveConfig);
 $("warm_models").addEventListener("change", saveConfig);
+// Standardstimme: Auswahl merken, erst „Übernehmen & aufwärmen“ speichert
 $("standard_voice").addEventListener("change", () => {
-  $("standard_voice").dataset.selected = $("standard_voice").value;
-  saveConfig();
+  const sel = $("standard_voice");
+  sel.dataset.selected = sel.value;
+  $("standard-info").textContent = sel.value === (sel.dataset.saved || "") ? "" : "noch nicht übernommen";
+});
+$("standard-apply").addEventListener("click", async () => {
+  const sel = $("standard_voice"), btn = $("standard-apply"), info = $("standard-info");
+  btn.disabled = true;
+  const res = await fetch("/api/standard_voice", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice: sel.value }),
+  }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) {
+    showError(data.detail || "Standardstimme konnte nicht übernommen werden.");
+    btn.disabled = false;
+    return;
+  }
+  hideError();
+  sel.dataset.saved = sel.value;
+  if (!data.warming) { info.textContent = "keine Standardstimme"; btn.disabled = false; return; }
+  info.textContent = "wird aufgewärmt …" + (data.note ? " " + data.note : "");
+  // fertig, sobald der Server kein Aufwärmen mehr meldet
+  await new Promise((r) => setTimeout(r, 1500));
+  for (let k = 0; k < 600; k++) {
+    const st = await fetch("/api/status").then((r) => r.json()).catch(() => null);
+    if (st && !st.warming) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  info.textContent = "✓ übernommen und warm";
+  btn.disabled = false;
 });
 $("pron-play").addEventListener("click", () => sayTest("direct", $("pron-test").value));
 $("pron-test").addEventListener("keydown", (ev) => {
