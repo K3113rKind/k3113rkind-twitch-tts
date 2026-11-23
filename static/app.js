@@ -1105,6 +1105,7 @@ async function loadCandidates(name) {
   const data = await fetch(`/api/clone/candidates/${encodeURIComponent(name)}`)
     .then((r) => r.json()).catch(() => null);
   el.cloneCands.innerHTML = "";
+  $("clone-text-which").textContent = "";
   const list = (data && data.candidates) || [];
   el.cloneCandsBox.classList.toggle("hidden", list.length < 2);
   for (const c of list) {
@@ -1115,12 +1116,20 @@ async function loadCandidates(name) {
     play.title = "Anhören";
     play.addEventListener("click", () => {
       if (candPlaying === play) { candAudio.pause(); setCandPlaying(null); return; }
+      for (const x of el.cloneCands.querySelectorAll("li.listening")) x.classList.remove("listening");
+      li.classList.add("listening");
       candAudio.src = `/api/clone/candidates/${encodeURIComponent(name)}/${c.idx}.wav?t=${Date.now()}`;
       candAudio.play().then(() => setCandPlaying(play)).catch((e) => showError("Abspielen nicht möglich: " + e));
     });
     const meta = document.createElement("span");
     meta.className = "meta";
     meta.textContent = `${c.idx}${c.german ? " · DE" : ""} · ${fmtSec(c.seconds)} · ${c.text}`;
+    if (data.chosen === c.idx) {
+      li.classList.add("chosen");
+      // Textfeld gehört immer zum gewählten Ausschnitt
+      el.cloneText.value = c.text;
+      $("clone-text-which").textContent = `(Ausschnitt ${c.idx}${c.german ? ", DE" : ""})`;
+    }
     meta.title = c.text;
     const pick = document.createElement("button");
     pick.type = "button";

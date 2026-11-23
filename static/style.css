@@ -330,3 +330,8 @@ a.btn-secondary.hidden { display: none; }
 /* Video der Freunde-Instanz (in der YouTube-Gruppe) */
 .ytf-box { margin-top: 1rem; padding-top: 0.6rem; border-top: 1px solid var(--line); }
 .ytf-box h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+
+/* Ausschnitte: ganzen Text zeigen (umbrechen), gewählten hervorheben */
+#clone-cands .meta { white-space: normal; overflow: visible; }
+#clone-cands li.chosen { background: color-mix(in srgb, var(--accent, #4a8) 14%, transparent); }
+#clone-cands li.listening .meta { font-weight: 600; }
