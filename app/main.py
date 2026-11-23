@@ -915,11 +915,19 @@ async def clone_choose(name: str, idx: int):
     (folder / "gewaehlt").write_text(f"{idx}\n", encoding="utf-8")
     tts.forget_clone(name)
     sync_clone_voices()
-    if clone_job.get("result") and clone_job["result"].get("name") == name:
-        clone_job["result"]["chosen"] = idx
+    text = txt.read_text(encoding="utf-8").strip() if txt.exists() else ""
+    res = clone_job.get("result")
+    if res and res.get("name") == name:
+        # Ergebnis der letzten Erstellung mitziehen – sonst zeigt die Seite
+        # (z. B. nach Neuladen) weiter Text und Zeiten von Ausschnitt 1, und
+        # „Text speichern“ würde diesen alten Text wieder hineinschreiben
+        res["chosen"] = idx
+        for c in res.get("candidates") or []:
+            if c.get("idx") == idx:
+                res.update({k: c[k] for k in ("start", "end", "seconds") if k in c})
+        res["text"] = text
     log.info("Eigene Stimme %s: Ausschnitt %d übernommen", name, idx)
     await broadcaster.send({"type": "voices_changed"})
-    text = txt.read_text(encoding="utf-8").strip() if txt.exists() else ""
     return {"ok": True, "chosen": idx, "text": text}
 
 

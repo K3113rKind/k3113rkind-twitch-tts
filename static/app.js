@@ -1042,6 +1042,10 @@ async function loadCandidates(name) {
       const r = await res.json();
       hideError();
       el.cloneText.value = r.text;
+      el.cloneResult.dataset.name = name;
+      // „Verwendet: …“ im Status auf den neuen Ausschnitt umstellen
+      el.cloneStatus.textContent = el.cloneStatus.textContent.replace(
+        /\nVerwendet: .*$/, `\nVerwendet: Ausschnitt ${c.idx} (${fmtSec(c.seconds)}).`);
       loadCandidates(name);
     });
     li.append(play, meta, pick);
