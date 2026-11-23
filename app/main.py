@@ -743,7 +743,8 @@ clone_job: dict = {"running": False, "name": None, "log": deque(maxlen=40),
                    "result": None, "error": None}
 
 
-async def _run_clone(source: str, name: str, seconds: float, root: str, direct: bool = False) -> None:
+async def _run_clone(source: str, name: str, seconds: float, root: str, direct: bool = False,
+                     start: float | None = None, end: float | None = None) -> None:
     """Pipeline als eigener Prozess (app/voice_clone.py); Ausgabe -> Job-Log.
     root: temporärer Ordner (Upload + Arbeitsdateien), wird danach gelöscht."""
     work = str(Path(root) / "arbeit")
@@ -753,6 +754,8 @@ async def _run_clone(source: str, name: str, seconds: float, root: str, direct: 
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.voice_clone", "--quelle", source, "--name", name,
             "--sekunden", str(seconds), "--arbeit", work, *(["--direkt"] if direct else []),
+            *(["--start", str(start)] if start is not None else []),
+            *(["--ende", str(end)] if end is not None else []),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
         )
         async for raw in proc.stdout:
@@ -787,6 +790,8 @@ async def clone_start(
     url: str = Form(""),
     overwrite: bool = Form(False),
     direct: bool = Form(False),
+    start: str = Form(""),
+    end: str = Form(""),
     file: UploadFile | None = File(None),
 ):
     """Neue eigene Stimme aus Video-Link (YouTube/Twitch) oder Audiodatei."""
@@ -804,6 +809,11 @@ async def clone_start(
     if url and not re.match(r"^https?://", url):
         raise HTTPException(400, "Der Link muss mit http:// oder https:// beginnen.")
     seconds = min(max(float(seconds), 5.0), 30.0)
+    t_start, t_end = _yt_time(start), _yt_time(end)  # leer = ganzes Video
+    if t_start is not None and t_start <= 0:
+        t_start = None
+    if t_start is not None and t_end is not None and t_end <= t_start:
+        raise HTTPException(400, "Die Endzeit muss nach der Startzeit liegen.")
 
     work = tempfile.mkdtemp(prefix="klon-")
     source = url
@@ -818,7 +828,7 @@ async def clone_start(
     clone_job.update(running=True, name=name, result=None, error=None, last_line=None)
     clone_job["log"].clear()
     clone_job["log"].append("Gestartet …")
-    asyncio.create_task(_run_clone(source, name, seconds, work, direct and bool(has_file)))
+    asyncio.create_task(_run_clone(source, name, seconds, work, direct and bool(has_file), t_start, t_end))
     return _clone_status()
 
 

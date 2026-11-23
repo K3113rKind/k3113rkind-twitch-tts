@@ -828,6 +828,8 @@ async function startClone(overwrite = false) {
   form.append("seconds", el.cloneSeconds.value || "20");
   form.append("overwrite", overwrite ? "true" : "false");
   if (url) form.append("url", url); else form.append("file", file);
+  form.append("start", document.getElementById("clone-tstart").value.trim());
+  form.append("end", document.getElementById("clone-tend").value.trim());
   el.cloneStart.disabled = true;
   el.cloneResult.classList.add("hidden");
   el.cloneResult.dataset.name = "";

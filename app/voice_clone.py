@@ -45,10 +45,20 @@ def run(*cmd: str) -> None:
 
 
 # ------------------------------------------------------------------ 1. Ton
-def fetch(source: str, work: Path) -> Path:
+def _hms(sec: float) -> str:
+    sec = int(round(sec))
+    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
+
+
+def fetch(source: str, work: Path, start: float | None = None, end: float | None = None) -> Path:
+    """start/end (Sekunden): nur diesen Ausschnitt verwenden – z. B. die
+    Stelle im Video, an der genau die gewünschte Person spricht."""
+    part = start is not None or end is not None
+    span = f"{_hms(start or 0)}–{_hms(end) if end else 'Ende'}"
     if source.startswith(("http://", "https://")):
-        step("Ton aus dem Video laden (yt-dlp) …")
-        run("yt-dlp", "--no-playlist", "--quiet", "--no-warnings", "-f", "bestaudio/best",
+        step(f"Ton aus dem Video laden (yt-dlp){' – Ausschnitt ' + span if part else ''} …")
+        section = ["--download-sections", f"*{start or 0}-{end if end else 'inf'}"] if part else []
+        run("yt-dlp", "--no-playlist", "--quiet", "--no-warnings", "-f", "bestaudio/best", *section,
             "-x", "--audio-format", "wav", "-o", str(work / "quelle.%(ext)s"), source)
         found = sorted(work.glob("quelle.*"))
         if not found:
@@ -57,6 +67,12 @@ def fetch(source: str, work: Path) -> Path:
     path = Path(source)
     if not path.is_file():
         raise RuntimeError(f"Datei nicht gefunden: {source}")
+    if part:
+        step(f"Ausschnitt {span} aus der Datei schneiden …")
+        out = work / "quelle_ausschnitt.wav"
+        run("ffmpeg", "-loglevel", "error", "-y", *(["-ss", str(start)] if start else []),
+            *(["-to", str(end)] if end else []), "-i", str(path), "-vn", str(out))
+        return out
     return path
 
 
@@ -263,6 +279,8 @@ def main() -> None:
     ap.add_argument("--name", required=True)
     ap.add_argument("--sekunden", type=float, default=20)
     ap.add_argument("--arbeit", required=True)
+    ap.add_argument("--start", type=float, default=None, help="Ausschnitt ab Sekunde")
+    ap.add_argument("--ende", type=float, default=None, help="Ausschnitt bis Sekunde")
     ap.add_argument("--direkt", action="store_true",
                     help="eigene Mikrofonaufnahme: keine Musik drin, nicht trennen/enthallen")
     args = ap.parse_args()
@@ -270,7 +288,7 @@ def main() -> None:
     work = Path(args.arbeit)
     work.mkdir(parents=True, exist_ok=True)
     try:
-        source = fetch(args.quelle, work)
+        source = fetch(args.quelle, work, args.start, args.ende)
         describe(source, "Quelle")
         if args.direkt:
             # Trennung/Enthallung frisst bei leisen, trockenen Handyaufnahmen

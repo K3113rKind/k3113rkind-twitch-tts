@@ -270,6 +270,15 @@
     <label class="file-row">oder Datei hochladen <span class="muted">(.wav, .mp3, …)</span>
       <input id="clone-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.flac,.mp4,.webm,.mkv,audio/*,video/*">
     </label>
+    <div class="cols">
+      <label>Start <span class="muted">(leer = Anfang)</span>
+        <input id="clone-tstart" type="text" inputmode="numeric" placeholder="z. B. 1:30" autocomplete="off">
+      </label>
+      <label>Ende <span class="muted">(leer = Schluss)</span>
+        <input id="clone-tend" type="text" inputmode="numeric" placeholder="z. B. 2:45" autocomplete="off">
+      </label>
+    </div>
+    <p class="hint">Start/Ende gelten für Link und Datei – so lässt sich gezielt die Stelle wählen, an der nur die gewünschte Person spricht.</p>
     <label>oder Aufnahme vom Mikrofon</label>
     <div class="actions">
       <button id="clone-rec" type="button" class="btn-secondary">🎙 Aufnahme (12 Sek.)</button>
@@ -305,7 +314,7 @@
   </div>
   </details>
 </main>
-<script src="/static/app.js?v=56"></script>
+<script src="/static/app.js?v=57"></script>
 <script src="/static/youtube.js?v=7"></script>
 </body>
 </html>
