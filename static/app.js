@@ -800,7 +800,9 @@ function showCloneStatus(job) {
   el.cloneStatus.classList.toggle("err", !!job.error);
   el.cloneStart.disabled = !!job.running;
   el.cloneStart.textContent = job.running ? `Erstelle „${job.name}“ …` : "Stimme erstellen";
-  if (job.result) {
+  // Ergebnis nur zeigen, wenn es zu diesem Auftrag gehört (beim Eindeutschen
+  // einer anderen Stimme bleibt die Ansicht bei der gerade bearbeiteten)
+  if (job.result && job.result.name === job.name) {
     const r = job.result;
     el.cloneStatus.textContent += `\nVerwendet: ${r.start}–${r.end} s (${r.seconds} s) aus der Aufnahme.`;
     if (el.cloneResult.dataset.name !== r.name) {
@@ -820,8 +822,32 @@ async function pollClone() {
     clearInterval(clonePoll);
     clonePoll = null;
     refreshStatus();
+    // neu erzeugte (deutsche) Ausschnitte anzeigen
+    if (el.cloneResult.dataset.name && !el.cloneResult.classList.contains("hidden")) {
+      loadCandidates(el.cloneResult.dataset.name);
+    }
+    $("clone-germanize").disabled = false;
   }
 }
+
+$("clone-germanize").addEventListener("click", async () => {
+  const name = el.cloneResult.dataset.name;
+  if (!name) return;
+  const btn = $("clone-germanize");
+  btn.disabled = true;
+  const res = await fetch(`/api/clone/candidates/${encodeURIComponent(name)}/deutsch`, { method: "POST" })
+    .catch(() => null);
+  if (!res || !res.ok) {
+    const b = res ? await res.json().catch(() => ({})) : {};
+    showError(b.detail || "Deutsche Vorlagen konnten nicht gestartet werden.");
+    btn.disabled = false;
+    return;
+  }
+  hideError();
+  el.cloneStatus.classList.remove("hidden");
+  if (!clonePoll) clonePoll = setInterval(pollClone, 1500);
+  pollClone();
+});
 
 async function startClone(overwrite = false) {
   const name = el.cloneName.value.trim().toLowerCase();
@@ -1031,7 +1057,7 @@ async function loadCandidates(name) {
     });
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = `${c.idx} · ${fmtSec(c.seconds)} · ${c.text}`;
+    meta.textContent = `${c.idx}${c.german ? " · DE" : ""} · ${fmtSec(c.seconds)} · ${c.text}`;
     meta.title = c.text;
     const pick = document.createElement("button");
     pick.type = "button";

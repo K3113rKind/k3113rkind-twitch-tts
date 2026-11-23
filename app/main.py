@@ -778,11 +778,113 @@ async def _run_clone(source: str, name: str, seconds: float, root: str, direct: 
             clone_job["log"].append("Fertig – die Stimme steht jetzt im Dropdown.")
             sync_clone_voices()
             await broadcaster.send({"type": "voices_changed"})
+            lang = (clone_job["result"] or {}).get("language", "de")
+            if lang != "de":
+                # Fremdsprachige Vorlage: gleich deutsche Vorlagen dazu erzeugen
+                if state["twitch"] is not None:
+                    clone_job["log"].append(
+                        f"Vorlage ist nicht deutsch ({lang}) – „Deutsche Vorlagen erzeugen“ "
+                        "geht, sobald der Chat gestoppt ist.")
+                else:
+                    await _clone_germanize(name)
     except Exception as exc:
         clone_job["error"] = str(exc)
     finally:
         clone_job["running"] = False
         shutil.rmtree(root, ignore_errors=True)
+
+
+GERMANIZE_COUNT = 6         # so viele deutsche Vorlagen zur Auswahl
+GERMANIZE_SENTENCES = 3     # Sätze je Vorlage (~10–15 s)
+
+
+def _germanize_texts(count: int) -> list[str]:
+    """Abwechslungsreiche deutsche Sätze (Fragen, Ausrufe, Zahlen, Umlaute)
+    zu Vorlagen von ~10–15 s bündeln, jedes Mal etwas anders gemischt."""
+    import random
+
+    from .training_texts import TRAINING_TEXTS
+
+    pool = [t for t in TRAINING_TEXTS if 25 <= len(t) <= 110]
+    random.shuffle(pool)
+    out = []
+    for k in range(count):
+        part = pool[k * GERMANIZE_SENTENCES:(k + 1) * GERMANIZE_SENTENCES]
+        if len(part) < GERMANIZE_SENTENCES:
+            break
+        out.append(" ".join(part))
+    return out
+
+
+async def _clone_germanize(name: str) -> int:
+    """Zweistufig eindeutschen: Mit der (z. B. englischen) Vorlage deutsche
+    Sätze sprechen lassen und als weitere Ausschnitte speichern. Der beste
+    davon wird – per Ohr ausgewählt – zur neuen, deutschen Vorlage: gleiche
+    Stimme, aber deutsche Sprechweise, die sich nicht weiter vererbt."""
+    import soundfile as sf
+
+    from . import klang
+    from .qwen_pool import with_priority
+
+    sync_clone_voices()
+    voice = f"klon-1.7b-{name}"
+    if not is_available(voice):
+        voice = f"klon-0.6b-{name}"
+    if not is_available(voice):
+        raise RuntimeError("Für diese Stimme gibt es keine Qwen-Variante.")
+    folder = _cand_dir(name)
+    folder.mkdir(parents=True, exist_ok=True)
+    texts = _germanize_texts(GERMANIZE_COUNT)
+    first = max([int(p.stem) for p in folder.glob("*.wav") if p.stem.isdigit()] or [0]) + 1
+    temperature = config.get("qwen_temperature")
+    clone_job["log"].append(f"Erzeuge {len(texts)} deutsche Vorlagen mit {VOICES[voice]['label']} …")
+    base = time.monotonic() + 3600  # Chat/Testtexte gehen vor
+    done = 0
+
+    async def one(k: int, text: str) -> None:
+        nonlocal done
+        r = await asyncio.to_thread(with_priority, (base, k), tts.synthesize, text, voice, 1.0,
+                                    temperature, None)
+        samples = klang.normalize_loudness(r.samples, r.sample_rate)
+        idx = first + k
+        sf.write(folder / f".{idx}.wav.tmp", samples, r.sample_rate, subtype="PCM_16", format="WAV")
+        (folder / f"{idx}.txt").write_text(text + "\n", encoding="utf-8")
+        (folder / f"{idx}.de").write_text("", encoding="utf-8")
+        os.replace(folder / f".{idx}.wav.tmp", folder / f"{idx}.wav")
+        done += 1
+        clone_job["log"].append(f"Deutsche Vorlage {done} von {len(texts)} fertig")
+
+    await asyncio.gather(*(one(k, t) for k, t in enumerate(texts)))
+    clone_job["log"].append("Fertig – unter „Ausschnitte“ die deutschen Vorlagen (DE) anhören und "
+                            "die beste mit „Diesen nehmen“ übernehmen.")
+    return len(texts)
+
+
+@app.post("/api/clone/candidates/{name}/deutsch")
+async def clone_germanize(name: str):
+    """Deutsche Vorlagen für eine eigene Stimme erzeugen (nur bei gestopptem
+    Chat – rechnet mit Qwen 1.7B und würde die Ausgabe sonst ausbremsen)."""
+    name = name.strip().lower()
+    if not CLONE_NAME.match(name) or not (ref_dir() / f"{name}.wav").exists():
+        raise HTTPException(404, "Diese eigene Stimme gibt es nicht.")
+    if clone_job["running"]:
+        raise HTTPException(409, f"Es wird gerade „{clone_job['name']}“ bearbeitet.")
+    if state["twitch"] is not None:
+        raise HTTPException(409, "Bitte erst den Chat stoppen – das Erzeugen rechnet mit Qwen 1.7B.")
+
+    async def run() -> None:
+        try:
+            await _clone_germanize(name)
+        except Exception as exc:
+            log.exception("Deutsche Vorlagen für %s fehlgeschlagen", name)
+            clone_job["error"] = str(exc)
+        finally:
+            clone_job["running"] = False
+
+    clone_job.update(running=True, name=name, error=None, last_line=None)
+    clone_job["log"].clear()
+    asyncio.create_task(run())
+    return _clone_status()
 
 
 @app.post("/api/clone")
@@ -885,7 +987,8 @@ async def clone_candidates(name: str):
         txt = wav.with_suffix(".txt")
         seconds = max(0.0, (wav.stat().st_size - 44) / (24000 * 2))  # 24 kHz, 16 Bit mono
         out.append({"idx": int(wav.stem), "seconds": round(seconds, 1),
-                    "text": txt.read_text(encoding="utf-8").strip() if txt.exists() else ""})
+                    "text": txt.read_text(encoding="utf-8").strip() if txt.exists() else "",
+                    "german": wav.with_suffix(".de").exists()})
     return {"name": name, "chosen": chosen, "candidates": out}
 
 

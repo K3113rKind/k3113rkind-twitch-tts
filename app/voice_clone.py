@@ -170,11 +170,27 @@ def transcribe(path: Path, work: Path):
     to_wav(path, w16, 16000, 1)
     audio, _ = sf.read(w16, dtype="float32")
     model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(audio, language="de", beam_size=5, word_timestamps=True)
+    # Sprache erkennen statt fest Deutsch: Die Abschrift muss wortgenau zur
+    # Aufnahme passen – bei einem englischen Video also englisch. Unsichere
+    # Erkennung (Musik, Lärm) -> wie bisher Deutsch.
+    language = "de"
+    try:
+        lang, prob, _all = model.detect_language(audio)
+        if lang != "de" and prob >= 0.7:
+            language = lang
+        step(f"Sprache erkannt: {lang} ({prob:.0%})".replace(".", ",")
+             + ("" if language == lang else " – unsicher, nehme Deutsch"))
+    except Exception as exc:  # ältere faster-whisper ohne detect_language
+        step(f"Spracherkennung nicht möglich ({str(exc)[:60]}) – nehme Deutsch")
+    segments, _ = model.transcribe(audio, language=language, beam_size=5, word_timestamps=True)
     words = [w for s in segments for w in (s.words or [])]
     for w in words:
         w.word = w.word.strip()
+    transcribe.language = language
     return [w for w in words if w.word]
+
+
+transcribe.language = "de"
 
 
 # ------------------------------------------------- 4. Abschnitt auswählen
@@ -307,6 +323,7 @@ def main() -> None:
              f"{heard[:160]}{'…' if len(heard) > 160 else ''}")
         step("Beste Abschnitte wählen …")
         result = cut_candidates(vocals, words, pick_windows(words, args.sekunden), args.name)
+        result["language"] = transcribe.language
         ensure_models()
         print("ERGEBNIS " + json.dumps(result, ensure_ascii=False), flush=True)
     finally:
